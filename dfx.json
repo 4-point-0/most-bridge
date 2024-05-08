@@ -1,0 +1,17 @@
+{
+  "canisters": {
+    "sufinity-bridge-backend": {
+      "candid": "src/sufinity-bridge-backend/sufinity-bridge-backend.did",
+      "package": "sufinity-bridge-backend",
+      "type": "rust"
+    }
+  },
+  "defaults": {
+    "build": {
+      "args": "",
+      "packtool": ""
+    }
+  },
+  "output_env_file": ".env",
+  "version": 1
+}
