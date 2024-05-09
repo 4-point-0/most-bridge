@@ -16,6 +16,9 @@
 # rust
 target/
 
+#move
+build/
+
 # frontend code
 node_modules/
 dist/
