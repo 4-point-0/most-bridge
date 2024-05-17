@@ -9,9 +9,15 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-candid = "0.8.2"
+candid = "0.10.6"
 ic-cdk = "0.6.0"
 ic-cdk-macros = "0.6.0"
 serde = "1.0.152"
 serde_json = "1.0.93"
 serde_bytes = "0.11.9"
+icrc-ledger-types = { git = "https://github.com/dfinity/ic", package = "icrc-ledger-types", version = "0.1.2" }
+icrc-ledger-client = { git = "https://github.com/dfinity/ic", package = "icrc-ledger-client-cdk", version = "0.1.2" }
+ic_principal = "0.1.1"
+ic-canister-log = "0.2.0"
+serde_derive = "1.0.202"
+
