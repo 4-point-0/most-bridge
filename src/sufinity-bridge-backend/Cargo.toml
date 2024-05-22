@@ -20,4 +20,6 @@ icrc-ledger-client = { git = "https://github.com/dfinity/ic", package = "icrc-le
 ic_principal = "0.1.1"
 ic-canister-log = "0.2.0"
 serde_derive = "1.0.202"
+ic-stable-memory-derive = "0.4.2"
+ic-stable-structures = "0.6.4"
 
