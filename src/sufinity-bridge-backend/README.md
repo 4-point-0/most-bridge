@@ -58,7 +58,7 @@ dfx identity use default
 export DEFAULT=$(dfx identity get-principal)
 ```
 
-# Step 6: Deploy localy icrc1_ledger_canister locally:
+# Step 6: Deploy icrc1_ledger_canister:
 
 ```bash
 dfx deploy icrc1_ledger_canister --argument "(variant { Init =
@@ -79,12 +79,24 @@ record {
 })"
 ```
 
-# Step7: Transfer funds to canister
+# Step 7: Deploy ircr1_ledger_indexer:
+
+```bash
+dfx deploy icrc1_index_canister --argument '(opt variant{Init = record { ledger_id = principal "" }})'
+```
+
+# Step 8: Deploy minter:
+
+```bash
+dfx deploy
+```
+
+# Step 9: Transfer funds to canister
 
 ```bash
 dfx canister call icrc1_ledger_canister icrc1_transfer "(record {
   to = record {
-    owner = principal \"$(dfx canister id sufinity-bridge-backend)\";
+    owner = principal \"$(dfx canister id minter)\";
   };
   amount = 1_000_000_000;
 })"

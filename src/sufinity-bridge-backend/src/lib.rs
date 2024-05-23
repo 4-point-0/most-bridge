@@ -16,6 +16,8 @@ use ic_stable_structures::{storable::Bound, DefaultMemoryImpl, StableBTreeMap, S
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::NumTokens;
 use std::cell::RefCell;
+use std::time::Duration;
+
 mod receipt;
 
 #[derive(CandidType, Deserialize, Serialize)]
@@ -30,11 +32,12 @@ struct Context {
     closing_price_index: usize,
 }
 
+pub const QUERY_SUI_EVENTS_INTERVAL: Duration = Duration::from_secs(60);
 const LEDGER_CANISTER_ID: &str = "mxzaz-hqaaa-aaaar-qaada-cai";
-// sui avg 30 DAYS TPS is 193 we are setting 193*60=11580 as we check how much events are there in 1 minute
 const SUI_RPC_URL: &str = "https://fullnode.testnet.sui.io:443";
 const PROCESSED_TX_DIGEST_KEY: &str = "txDigest";
-const SUIX_QUERY_EVENTS: &str = "{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"suix_queryEvents\",\"params\":[{\"MoveModule\":{\"package\":\"0x44720817255b799b5c23d722568e850d07db51bf52b9c0425b3b16a1fe5f21a0\",\"module\": \"ckSuiHelper\"}},null,1,false]}";
+// sui avg 30 DAYS TPS is 193 we are setting 193*60=11580 as we check how much events are there in 1 minute
+const SUIX_QUERY_EVENTS: &str = "{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"suix_queryEvents\",\"params\":[{\"MoveModule\":{\"package\":\"0x44720817255b799b5c23d722568e850d07db51bf52b9c0425b3b16a1fe5f21a0\",\"module\": \"ckSuiHelper\"}},null,18000,false]}";
 
 #[derive(CandidType, PartialEq, Deserialize)]
 struct Event {
@@ -53,7 +56,6 @@ struct KeyName(String);
 
 impl Storable for KeyName {
     fn to_bytes(&self) -> std::borrow::Cow<[u8]> {
-        // String already implements `Storable`.
         self.0.to_bytes()
     }
 
@@ -68,7 +70,6 @@ struct KeyValue(String);
 
 impl Storable for KeyValue {
     fn to_bytes(&self) -> std::borrow::Cow<[u8]> {
-        // String already implements `Storable`.
         self.0.to_bytes()
     }
 
@@ -92,8 +93,6 @@ impl Storable for Event {
 }
 
 thread_local! {
-    // The memory manager is used for simulating multiple memories. Given a `MemoryId` it can
-    // return a memory that can be used by stable structures.
     static MEMORY_MANAGER: RefCell<MemoryManager<DefaultMemoryImpl>> =
         RefCell::new(MemoryManager::init(DefaultMemoryImpl::default()));
 
@@ -112,8 +111,42 @@ thread_local! {
 
 }
 
-#[ic_cdk::update]
-async fn mint() -> String {
+fn setup_timers() {
+    ic_cdk_timers::set_timer_interval(QUERY_SUI_EVENTS_INTERVAL, || ic_cdk::spawn(self::mint()));
+    log!(INFO, "Timer set");
+}
+
+#[ic_cdk_macros::init]
+fn init() {
+    setup_timers();
+}
+
+#[ic_cdk::query]
+async fn total_events() -> u64 {
+    EVENTS.with(|events| events.borrow().len())
+}
+
+#[ic_cdk::query]
+async fn get_one() -> String {
+    EVENTS.with(|events| {
+        events.borrow_mut().iter().for_each(|(k, v)| {
+            log!(INFO, "Key: {}, Value: {:?}", k.0, v.tx_digest);
+        })
+    });
+    return "test".to_string();
+}
+
+#[ic_cdk::query]
+async fn get_events() -> Vec<(String, String)> {
+    EVENTS.with(|t| {
+        t.borrow()
+            .iter()
+            .map(|(k, v)| (k.clone().0.to_string(), v.tx_digest))
+            .collect()
+    })
+}
+
+async fn mint() {
     use candid::Principal;
     use icrc_ledger_client::{CdkRuntime, ICRC1Client};
     use icrc_ledger_types::icrc1::account::Account;
@@ -155,11 +188,6 @@ async fn mint() -> String {
         Ok((response,)) => {
             let trasnaction = serde_json::from_slice::<receipt::Root>(&response.body)
                 .map_err(|e| format!("Error: {}", e.to_string()));
-
-            self::insert(
-                PROCESSED_TX_DIGEST_KEY.to_string(),
-                trasnaction.clone().unwrap().result.next_cursor.tx_digest,
-            );
 
             let events = &trasnaction.clone().unwrap().result.data;
 
@@ -210,6 +238,11 @@ async fn mint() -> String {
                     .await
                 {
                     Ok(Ok(block_index)) => {
+                        self::insert(
+                            PROCESSED_TX_DIGEST_KEY.to_string(),
+                            trasnaction.clone().unwrap().result.next_cursor.tx_digest,
+                        );
+
                         self::insert_event(
                             event.id.tx_digest.to_string(),
                             Event {
@@ -223,9 +256,7 @@ async fn mint() -> String {
                         );
                         block_index.to_string()
                     }
-                    Ok(Err(err)) => {
-                        err.to_string() // Change this line to return only the error message as a string
-                    }
+                    Ok(Err(err)) => err.to_string(),
                     Err(err) => {
                         log!(
                                 INFO,
@@ -237,22 +268,12 @@ async fn mint() -> String {
 
                 log!(INFO, "Minted tokens on ({block_index})");
             }
-
-            let str_body = String::from_utf8(response.body)
-                .expect("Transformed response is not UTF-8 encoded.");
-            ic_cdk::api::print(format!("{:?}", str_body));
-
-            let result: String = format!(
-                "{}. See more info of the request sent at: {}/inspect",
-                str_body,
-                SUI_RPC_URL.to_string()
-            );
-            result
         }
         Err((r, m)) => {
-            let message =
-                format!("The http_request resulted into error. RejectionCode: {r:?}, Error: {m}");
-            message
+            log!(
+                INFO,
+                "The http_request resulted into error. RejectionCode: {r:?}, Error: {m}"
+            );
         }
     }
 }
@@ -301,10 +322,6 @@ fn transform(raw: TransformArgs) -> HttpResponse {
     }
     res
 }
-
-// fn get_event(key: String) -> Option<Event> {
-//     EVENTS.with(|p| p.borrow().get(&KeyName(key)))
-// }
 
 fn insert_event(key: String, value: Event) -> Option<Event> {
     EVENTS.with(|p| p.borrow_mut().insert(KeyName(key), value))

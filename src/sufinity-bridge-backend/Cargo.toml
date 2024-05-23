@@ -1,5 +1,5 @@
 [package]
-name = "sufinity-bridge-backend"
+name = "minter"
 version = "0.1.0"
 edition = "2021"
 
@@ -22,4 +22,5 @@ ic-canister-log = "0.2.0"
 serde_derive = "1.0.202"
 ic-stable-memory-derive = "0.4.2"
 ic-stable-structures = "0.6.4"
+ic-cdk-timers = "0.8.0"
 

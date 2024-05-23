@@ -1,0 +1,7 @@
+service : () -> {
+    "total_events": () -> (nat64) query;
+    "get_events": () -> (text,text) query;
+    "get_one": () -> (text) query;
+}
+
+
