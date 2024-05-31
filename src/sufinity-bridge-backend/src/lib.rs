@@ -3,14 +3,15 @@ use ic_cdk::api::management_canister::http_request::{
     http_request, CanisterHttpRequestArgument, HttpHeader, HttpMethod, HttpResponse, TransformArgs,
     TransformContext,
 };
-use ic_cdk_macros::{self, query};
-use serde::Serialize;
+use ic_cdk::{query, update};
+use serde::{Deserialize, Serialize};
 use serde_json::{self};
 use std::borrow::Cow;
 use std::str::FromStr;
 mod logs;
 use crate::logs::INFO;
-use candid::{CandidType, Decode, Deserialize, Encode};
+use base64::{self, engine::general_purpose::STANDARD, Engine};
+use candid::{candid_method, CandidType, Decode, Encode, Principal};
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager, VirtualMemory};
 use ic_stable_structures::{storable::Bound, DefaultMemoryImpl, StableBTreeMap, Storable};
 use icrc_ledger_types::icrc1::account::Account;
@@ -147,7 +148,6 @@ async fn get_events() -> Vec<(String, String)> {
 }
 
 async fn mint() {
-    use candid::Principal;
     use icrc_ledger_client::{CdkRuntime, ICRC1Client};
     use icrc_ledger_types::icrc1::account::Account;
     use icrc_ledger_types::icrc1::transfer::TransferArg;
@@ -178,13 +178,13 @@ async fn mint() {
             value: "application/json".to_string(),
         }],
         body: Some(suix_query_events.to_string().into_bytes()),
-        transform: Some(TransformContext::new(
-            transform,
+        transform: Some(TransformContext::from_name(
+            "cleanup_response".to_owned(),
             serde_json::to_vec(&context).unwrap(),
         )),
     };
 
-    match http_request(request).await {
+    match http_request(request, 25_000_000_000).await {
         Ok((response,)) => {
             let trasnaction = serde_json::from_slice::<receipt::Root>(&response.body)
                 .map_err(|e| format!("Error: {}", e.to_string()));
@@ -280,7 +280,8 @@ async fn mint() {
 
 // Strips all data that is not needed from the original response.
 #[query]
-fn transform(raw: TransformArgs) -> HttpResponse {
+#[candid_method(query)]
+fn cleanup_response(raw: TransformArgs) -> HttpResponse {
     let headers = vec![
         HttpHeader {
             name: "Content-Security-Policy".to_string(),
@@ -315,12 +316,158 @@ fn transform(raw: TransformArgs) -> HttpResponse {
         ..Default::default()
     };
 
-    if res.status == 200 {
+    if res.status == 200u16 {
         res.body = raw.response.body.clone();
     } else {
         ic_cdk::api::print(format!("Received an error from coinbase: err = {:?}", raw));
     }
     res
+}
+
+#[derive(CandidType, Serialize, Debug)]
+struct PublicKeyReply {
+    pub public_key_hex: String,
+}
+
+#[derive(CandidType, Serialize, Debug)]
+struct SignatureReply {
+    pub signature_hex: String,
+}
+
+#[derive(CandidType, Serialize, Debug)]
+struct SignatureVerificationReply {
+    pub is_signature_valid: bool,
+}
+
+type CanisterId = Principal;
+
+#[derive(CandidType, Serialize, Debug)]
+struct ECDSAPublicKey {
+    pub canister_id: Option<CanisterId>,
+    pub derivation_path: Vec<Vec<u8>>,
+    pub key_id: EcdsaKeyId,
+}
+
+#[derive(CandidType, Deserialize, Debug)]
+struct ECDSAPublicKeyReply {
+    pub public_key: Vec<u8>,
+    pub chain_code: Vec<u8>,
+}
+
+#[derive(CandidType, Serialize, Debug)]
+struct SignWithECDSA {
+    // pub url: String,
+    pub message_hash: Vec<u8>,
+    pub derivation_path: Vec<Vec<u8>>,
+    pub key_id: EcdsaKeyId,
+}
+
+#[derive(CandidType, Deserialize, Debug)]
+struct SignWithECDSAReply {
+    pub signature: Vec<u8>,
+}
+
+#[derive(CandidType, Serialize, Debug, Clone)]
+struct EcdsaKeyId {
+    pub curve: EcdsaCurve,
+    pub name: String,
+}
+
+#[derive(CandidType, Serialize, Debug, Clone)]
+pub enum EcdsaCurve {
+    #[serde(rename = "secp256k1")]
+    Secp256k1,
+}
+
+fn mgmt_canister_id() -> CanisterId {
+    CanisterId::from_str(&"aaaaa-aa").unwrap()
+}
+
+enum EcdsaKeyIds {
+    #[allow(unused)]
+    TestKeyLocalDevelopment,
+    #[allow(unused)]
+    TestKey1,
+    #[allow(unused)]
+    ProductionKey1,
+}
+
+impl EcdsaKeyIds {
+    fn to_key_id(&self) -> EcdsaKeyId {
+        EcdsaKeyId {
+            curve: EcdsaCurve::Secp256k1,
+            name: match self {
+                Self::TestKeyLocalDevelopment => "dfx_test_key",
+                Self::TestKey1 => "test_key_1",
+                Self::ProductionKey1 => "key_1",
+            }
+            .to_string(),
+        }
+    }
+}
+
+#[update]
+async fn withdraw(msg: String) -> Result<SignatureReply, String> {
+    let context = Context {
+        bucket_start_time_index: 0,
+        closing_price_index: 4,
+    };
+
+    let request = CanisterHttpRequestArgument {
+        url: "https://localhost:8080/".to_string(),
+        max_response_bytes: None,
+        method: HttpMethod::POST,
+        headers: vec![HttpHeader {
+            name: "Content-Type".to_string(),
+            value: "application/json".to_string(),
+        }],
+        body: None,
+        transform: Some(TransformContext::from_name(
+            "cleanup_response".to_owned(),
+            serde_json::to_vec(&context).unwrap(),
+        )),
+    };
+
+    match http_request(request, 25_000_000_000).await {
+        Ok((response,)) => {
+            let msg = &response.body;
+
+            let request = SignWithECDSA {
+                message_hash: msg.to_owned(),
+                derivation_path: vec![],
+                key_id: EcdsaKeyIds::TestKeyLocalDevelopment.to_key_id(),
+            };
+
+            let (response,): (SignWithECDSAReply,) = ic_cdk::api::call::call_with_payment(
+                mgmt_canister_id(),
+                "sign_with_ecdsa",
+                (request,),
+                25_000_000_000,
+            )
+            .await
+            .map_err(|e| format!("sign_with_ecdsa failed {}", e.1))?;
+
+            let flag: u8 = 0x01;
+
+            let mut signature_bytes: Vec<u8> = Vec::new();
+            signature_bytes.extend_from_slice(&[flag]);
+            signature_bytes.extend_from_slice(&response.signature.as_ref());
+            signature_bytes.extend_from_slice(
+                "0x1d9b089c434a8de5c938676b68e4c064af210eb002017b1865950dd7ac020000".as_ref(),
+            );
+
+            print!("{:?}", Engine::encode(&STANDARD, signature_bytes));
+        }
+        Err((r, m)) => {
+            log!(
+                INFO,
+                "The http_request resulted into error. RejectionCode: {r:?}, Error: {m}"
+            );
+        }
+    };
+    Ok(SignatureReply {
+        signature_hex: "1243".to_string(),
+    })
 }
 
 fn insert_event(key: String, value: Event) -> Option<Event> {

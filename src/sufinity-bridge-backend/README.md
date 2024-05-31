@@ -82,7 +82,7 @@ record {
 # Step 7: Deploy ircr1_ledger_indexer:
 
 ```bash
-dfx deploy icrc1_index_canister --argument '(opt variant{Init = record { ledger_id = principal "" }})'
+dfx deploy icrc1_index_canister --argument '(opt variant{Init = record { ledger_id = principal "mxzaz-hqaaa-aaaar-qaada-cai" }})'
 ```
 
 # Step 8: Deploy minter:
