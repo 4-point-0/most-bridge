@@ -1,97 +1,32 @@
+use common::{
+    Context, ECDSAPublicKey, ECDSAPublicKeyReply, EcdsaKeyIds, SignWithECDSA, SignWithECDSAReply,
+    SignatureReply, TxDigestResponse,
+};
+use constants::{
+    LEDGER_CANISTER_ID, PROCESSED_TX_DIGEST_KEY, QUERY_SUI_EVENTS_INTERVAL, SUFINITY_API_URL,
+    SUIX_QUERY_EVENTS, SUI_RPC_URL,
+};
+use event::{Event, KeyName, KeyValue, Memory};
 use ic_canister_log::log;
 use ic_cdk::api::management_canister::http_request::{
     http_request, CanisterHttpRequestArgument, HttpHeader, HttpMethod, HttpResponse, TransformArgs,
     TransformContext,
 };
 use ic_cdk::{query, update};
-use serde::{Deserialize, Serialize};
+use icrc_ledger_types::icrc1::transfer::NumTokens;
 use serde_json::{self};
-use std::borrow::Cow;
 use std::str::FromStr;
+mod common;
+mod constants;
+mod event;
 mod logs;
 use crate::logs::INFO;
 use base64::{self, engine::general_purpose::STANDARD, Engine};
-use candid::{candid_method, CandidType, Decode, Encode, Principal};
-use ic_stable_structures::memory_manager::{MemoryId, MemoryManager, VirtualMemory};
-use ic_stable_structures::{storable::Bound, DefaultMemoryImpl, StableBTreeMap, Storable};
-use icrc_ledger_types::icrc1::account::Account;
-use icrc_ledger_types::icrc1::transfer::NumTokens;
+use candid::{candid_method, Principal};
+use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
+use ic_stable_structures::{DefaultMemoryImpl, StableBTreeMap};
 use std::cell::RefCell;
-use std::time::Duration;
-
 mod receipt;
-
-#[derive(CandidType, Deserialize, Serialize)]
-pub struct TransferArgs {
-    amount: NumTokens,
-    to_account: Account,
-}
-
-#[derive(Serialize, Deserialize)]
-struct Context {
-    bucket_start_time_index: usize,
-    closing_price_index: usize,
-}
-
-pub const QUERY_SUI_EVENTS_INTERVAL: Duration = Duration::from_secs(60);
-const LEDGER_CANISTER_ID: &str = "mxzaz-hqaaa-aaaar-qaada-cai";
-const SUI_RPC_URL: &str = "https://fullnode.testnet.sui.io:443";
-const PROCESSED_TX_DIGEST_KEY: &str = "txDigest";
-// sui avg 30 DAYS TPS is 193 we are setting 193*60=11580 as we check how much events are there in 1 minute
-const SUIX_QUERY_EVENTS: &str = "{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"suix_queryEvents\",\"params\":[{\"MoveModule\":{\"package\":\"0x44720817255b799b5c23d722568e850d07db51bf52b9c0425b3b16a1fe5f21a0\",\"module\": \"ckSuiHelper\"}},null,18000,false]}";
-
-#[derive(CandidType, PartialEq, Deserialize)]
-struct Event {
-    timestamp: u64,
-    tx_digest: String,
-    from: String,
-    minter_address: String,
-    principal_address: String,
-    value: String,
-}
-
-type Memory = VirtualMemory<DefaultMemoryImpl>;
-
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone)]
-struct KeyName(String);
-
-impl Storable for KeyName {
-    fn to_bytes(&self) -> std::borrow::Cow<[u8]> {
-        self.0.to_bytes()
-    }
-
-    fn from_bytes(bytes: std::borrow::Cow<[u8]>) -> Self {
-        Self(String::from_bytes(bytes))
-    }
-
-    const BOUND: Bound = Bound::Unbounded;
-}
-
-struct KeyValue(String);
-
-impl Storable for KeyValue {
-    fn to_bytes(&self) -> std::borrow::Cow<[u8]> {
-        self.0.to_bytes()
-    }
-
-    fn from_bytes(bytes: std::borrow::Cow<[u8]>) -> Self {
-        Self(String::from_bytes(bytes))
-    }
-
-    const BOUND: Bound = Bound::Unbounded;
-}
-
-impl Storable for Event {
-    fn to_bytes(&self) -> std::borrow::Cow<[u8]> {
-        Cow::Owned(Encode!(self).unwrap())
-    }
-
-    fn from_bytes(bytes: std::borrow::Cow<[u8]>) -> Self {
-        Decode!(bytes.as_ref(), Self).unwrap()
-    }
-
-    const BOUND: Bound = Bound::Unbounded;
-}
 
 thread_local! {
     static MEMORY_MANAGER: RefCell<MemoryManager<DefaultMemoryImpl>> =
@@ -122,31 +57,6 @@ fn init() {
     setup_timers();
 }
 
-#[ic_cdk::query]
-async fn total_events() -> u64 {
-    EVENTS.with(|events| events.borrow().len())
-}
-
-#[ic_cdk::query]
-async fn get_one() -> String {
-    EVENTS.with(|events| {
-        events.borrow_mut().iter().for_each(|(k, v)| {
-            log!(INFO, "Key: {}, Value: {:?}", k.0, v.tx_digest);
-        })
-    });
-    return "test".to_string();
-}
-
-#[ic_cdk::query]
-async fn get_events() -> Vec<(String, String)> {
-    EVENTS.with(|t| {
-        t.borrow()
-            .iter()
-            .map(|(k, v)| (k.clone().0.to_string(), v.tx_digest))
-            .collect()
-    })
-}
-
 async fn mint() {
     use icrc_ledger_client::{CdkRuntime, ICRC1Client};
     use icrc_ledger_types::icrc1::account::Account;
@@ -163,10 +73,7 @@ async fn mint() {
 
     if tx_digest_cursor != None {
         tx_digest_value = tx_digest_cursor.as_ref().unwrap();
-        suix_query_events = format!(
-            "{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"suix_queryEvents\",\"params\":[{{\"MoveModule\":{{\"package\":\"0x44720817255b799b5c23d722568e850d07db51bf52b9c0425b3b16a1fe5f21a0\",\"module\": \"ckSuiHelper\"}}}},{{\"txDigest\":\"{}\", \"eventSeq\": \"0\"}},2,false]}}",
-            tx_digest_value
-        );
+        suix_query_events = format!("{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"suix_queryEvents\",\"params\":[{{\"MoveModule\":{{\"package\":\"0x44720817255b799b5c23d722568e850d07db51bf52b9c0425b3b16a1fe5f21a0\",\"module\": \"ckSuiHelper\"}}}},{{\"txDigest\":\"{}\", \"eventSeq\": \"0\"}},2,false]}}", tx_digest_value);
     }
 
     let request = CanisterHttpRequestArgument {
@@ -278,7 +185,6 @@ async fn mint() {
     }
 }
 
-// Strips all data that is not needed from the original response.
 #[query]
 #[candid_method(query)]
 fn cleanup_response(raw: TransformArgs) -> HttpResponse {
@@ -324,88 +230,6 @@ fn cleanup_response(raw: TransformArgs) -> HttpResponse {
     res
 }
 
-#[derive(CandidType, Serialize, Debug)]
-struct PublicKeyReply {
-    pub public_key_hex: String,
-}
-
-#[derive(CandidType, Serialize, Debug)]
-struct SignatureReply {
-    pub signature_hex: String,
-}
-
-#[derive(CandidType, Serialize, Debug)]
-struct SignatureVerificationReply {
-    pub is_signature_valid: bool,
-}
-
-type CanisterId = Principal;
-
-#[derive(CandidType, Serialize, Debug)]
-struct ECDSAPublicKey {
-    pub canister_id: Option<CanisterId>,
-    pub derivation_path: Vec<Vec<u8>>,
-    pub key_id: EcdsaKeyId,
-}
-
-#[derive(CandidType, Deserialize, Debug)]
-struct ECDSAPublicKeyReply {
-    pub public_key: Vec<u8>,
-    pub chain_code: Vec<u8>,
-}
-
-#[derive(CandidType, Serialize, Debug)]
-struct SignWithECDSA {
-    // pub url: String,
-    pub message_hash: Vec<u8>,
-    pub derivation_path: Vec<Vec<u8>>,
-    pub key_id: EcdsaKeyId,
-}
-
-#[derive(CandidType, Deserialize, Debug)]
-struct SignWithECDSAReply {
-    pub signature: Vec<u8>,
-}
-
-#[derive(CandidType, Serialize, Debug, Clone)]
-struct EcdsaKeyId {
-    pub curve: EcdsaCurve,
-    pub name: String,
-}
-
-#[derive(CandidType, Serialize, Debug, Clone)]
-pub enum EcdsaCurve {
-    #[serde(rename = "secp256k1")]
-    Secp256k1,
-}
-
-fn mgmt_canister_id() -> CanisterId {
-    CanisterId::from_str(&"aaaaa-aa").unwrap()
-}
-
-enum EcdsaKeyIds {
-    #[allow(unused)]
-    TestKeyLocalDevelopment,
-    #[allow(unused)]
-    TestKey1,
-    #[allow(unused)]
-    ProductionKey1,
-}
-
-impl EcdsaKeyIds {
-    fn to_key_id(&self) -> EcdsaKeyId {
-        EcdsaKeyId {
-            curve: EcdsaCurve::Secp256k1,
-            name: match self {
-                Self::TestKeyLocalDevelopment => "dfx_test_key",
-                Self::TestKey1 => "test_key_1",
-                Self::ProductionKey1 => "key_1",
-            }
-            .to_string(),
-        }
-    }
-}
-
 #[update]
 async fn withdraw(msg: String) -> Result<SignatureReply, String> {
     let context = Context {
@@ -413,13 +237,27 @@ async fn withdraw(msg: String) -> Result<SignatureReply, String> {
         closing_price_index: 4,
     };
 
+    let mut public_key: String = String::new();
+    let mut signature: String = "".to_string();
+
+    let request = ECDSAPublicKey {
+        canister_id: None,
+        derivation_path: vec![],
+        key_id: EcdsaKeyIds::TestKeyLocalDevelopment.to_key_id(),
+    };
+
+    let (res_public_key,): (ECDSAPublicKeyReply,) =
+        ic_cdk::call(mgmt_canister_id(), "ecdsa_public_key", (request,))
+            .await
+            .map_err(|e| format!("ecdsa_public_key failed {}", e.1))?;
+
     let request = CanisterHttpRequestArgument {
-        url: "https://localhost:8080/".to_string(),
+        url: "https://local.sufinity:8080/tx-digest".to_string(),
         max_response_bytes: None,
-        method: HttpMethod::POST,
+        method: HttpMethod::GET,
         headers: vec![HttpHeader {
-            name: "Content-Type".to_string(),
-            value: "application/json".to_string(),
+            name: "Host".to_string(),
+            value: SUFINITY_API_URL.to_string(),
         }],
         body: None,
         transform: Some(TransformContext::from_name(
@@ -430,10 +268,18 @@ async fn withdraw(msg: String) -> Result<SignatureReply, String> {
 
     match http_request(request, 25_000_000_000).await {
         Ok((response,)) => {
-            let msg = &response.body;
+            let result = serde_json::from_slice::<TxDigestResponse>(&response.body)
+                .map_err(|e| format!("Error: {}", e.to_string()))
+                .unwrap();
+
+            let digest_decoded = Engine::decode(&STANDARD, result.digest)
+                .map_err(|e| format!("Error: {}", e.to_string()))
+                .unwrap();
+
+            let digest: [u8; 32] = digest_decoded.try_into().unwrap();
 
             let request = SignWithECDSA {
-                message_hash: msg.to_owned(),
+                message_hash: sha256(digest).to_vec(),
                 derivation_path: vec![],
                 key_id: EcdsaKeyIds::TestKeyLocalDevelopment.to_key_id(),
             };
@@ -446,17 +292,15 @@ async fn withdraw(msg: String) -> Result<SignatureReply, String> {
             )
             .await
             .map_err(|e| format!("sign_with_ecdsa failed {}", e.1))?;
+            public_key = Engine::encode(&STANDARD, &res_public_key.public_key.clone());
 
-            let flag: u8 = 0x01;
-
+            let flag: u8 = 0x1;
             let mut signature_bytes: Vec<u8> = Vec::new();
             signature_bytes.extend_from_slice(&[flag]);
             signature_bytes.extend_from_slice(&response.signature.as_ref());
-            signature_bytes.extend_from_slice(
-                "0x1d9b089c434a8de5c938676b68e4c064af210eb002017b1865950dd7ac020000".as_ref(),
-            );
+            signature_bytes.extend_from_slice(&res_public_key.public_key.as_ref());
 
-            print!("{:?}", Engine::encode(&STANDARD, signature_bytes));
+            signature = Engine::encode(&STANDARD, &signature_bytes[..]);
         }
         Err((r, m)) => {
             log!(
@@ -466,21 +310,99 @@ async fn withdraw(msg: String) -> Result<SignatureReply, String> {
         }
     };
     Ok(SignatureReply {
-        signature_hex: "1243".to_string(),
+        public_key,
+        signature,
     })
+}
+
+fn sha256(input: [u8; 32]) -> [u8; 32] {
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(input);
+    hasher.finalize().into()
+}
+
+fn mgmt_canister_id() -> Principal {
+    Principal::from_str(&"aaaaa-aa").unwrap()
 }
 
 fn insert_event(key: String, value: Event) -> Option<Event> {
     EVENTS.with(|p| p.borrow_mut().insert(KeyName(key), value))
 }
 
-// Gets the value of the key if it exists.
 fn get(key: String) -> Option<String> {
     MAP.with(|p| p.borrow().get(&KeyName(key)).map(|v| v.0))
 }
 
-// Inserts an entry into the map and returns the previous value of the key if it exists.
 fn insert(key: String, value: String) -> Option<String> {
     MAP.with(|p| p.borrow_mut().insert(KeyName(key), KeyValue(value)))
         .map(|v| v.0)
 }
+
+// #[ic_cdk::query]
+// async fn total_events() -> u64 {
+//     EVENTS.with(|events| events.borrow().len())
+// }
+
+// #[ic_cdk::query]
+// async fn get_one() -> String {
+//     EVENTS.with(|events| {
+//         events.borrow_mut().iter().for_each(|(k, v)| {
+//             log!(INFO, "Key: {}, Value: {:?}", k.0, v.tx_digest);
+//         })
+//     });
+//     return "test".to_string();
+// }
+
+// #[ic_cdk::query]
+// async fn get_events() -> Vec<(String, String)> {
+//     EVENTS.with(|t| {
+//         t.borrow()
+//             .iter()
+//             .map(|(k, v)| (k.clone().0.to_string(), v.tx_digest))
+//             .collect()
+//     })
+// }
+
+// fn from_bytes(bytes: &[u8]) -> [u8; 98] {
+//     const LENGTH: usize = 98;
+//     let mut sig_bytes: [u8; 98] = [0; LENGTH];
+//     sig_bytes.copy_from_slice(bytes);
+//     sig_bytes
+// }
+
+// async fn get_public_key() -> Result<Vec<u8>, String> {
+//     let context = Context {
+//         bucket_start_time_index: 0,
+//         closing_price_index: 4,
+//     };
+//     let public_key_req = CanisterHttpRequestArgument {
+//         url: "https://local.sufinity:8080/public-key".to_string(),
+//         max_response_bytes: None,
+//         method: HttpMethod::GET,
+//         headers: vec![HttpHeader {
+//             name: "Host".to_string(),
+//             value: format!("https://local.sufinity:8080"),
+//         }],
+//         body: None,
+//         transform: Some(TransformContext::from_name(
+//             "cleanup_response".to_owned(),
+//             serde_json::to_vec(&context).unwrap(),
+//         )),
+//     };
+
+//     let pub_key = match http_request(public_key_req, 25_000_000_000).await {
+//         Ok((response,)) => {
+//             let public_key = &response.body;
+//             Ok(public_key.clone())
+//         }
+//         Err((r, m)) => {
+//             let message =
+//                 format!("The http_request resulted into error. RejectionCode: {r:?}, Error: {m}");
+
+//             //Return the error as a string and end the method
+//             Err(message)
+//         }
+//     };
+//     return pub_key;
+// }

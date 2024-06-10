@@ -1,10 +1,10 @@
 
 
 service : () -> {
-    "total_events": () -> (nat64) query;
-    "get_events": () -> (text,text) query;
-    "get_one": () -> (text) query;
-    "withdraw": (message: text) -> (variant { Ok: record { signature_hex: text; }; Err: text });
+    // "total_events": () -> (nat64) query;
+    // "get_events": () -> (text,text) query;
+    // "get_one": () -> (text) query;
+    "withdraw": (message: text) -> (variant { Ok: record { public_key: text; signature: text; }; Err: text });
 }
 
 
