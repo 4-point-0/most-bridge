@@ -1,5 +1,5 @@
 [workspace]
 members = [
-    "src/sufinity-bridge-backend"
+    "src/sufinity-bridge-backend","src/sufinity-bridge-api"
 ]
 resolver = "2"
