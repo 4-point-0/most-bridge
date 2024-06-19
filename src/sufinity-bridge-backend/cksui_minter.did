@@ -4,7 +4,8 @@ service : () -> {
     // "total_events": () -> (nat64) query;
     // "get_events": () -> (text,text) query;
     // "get_one": () -> (text) query;
-    "withdraw": (message: text) -> (variant { Ok: record { public_key: text; signature: text; }; Err: text });
+    "withdraw" : (recipient: text, amount: text) -> (variant { Ok: record { tx_digest: text; }; Err: text });
+    "public_key" : () -> (variant { Ok: record { public_key: text; }; Err: text });
 }
 
 

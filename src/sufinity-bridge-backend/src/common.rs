@@ -18,6 +18,7 @@ pub struct Context {
 #[derive(Deserialize, Serialize, Debug)]
 pub struct TxDigestResponse {
     pub digest: String,
+    pub tx_bytes: String,
 }
 
 #[derive(CandidType, Serialize, Debug)]
@@ -26,9 +27,8 @@ pub struct PublicKeyReply {
 }
 
 #[derive(CandidType, Serialize, Debug)]
-pub struct SignatureReply {
-    pub signature: String,
-    pub public_key: String,
+pub struct WithdrawResponse {
+    pub tx_digest: String,
 }
 
 #[derive(CandidType, Serialize, Debug)]

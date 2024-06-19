@@ -1,10 +1,10 @@
 use common::{
     Context, ECDSAPublicKey, ECDSAPublicKeyReply, EcdsaKeyIds, SignWithECDSA, SignWithECDSAReply,
-    SignatureReply, TxDigestResponse,
+    TxDigestResponse, WithdrawResponse,
 };
 use constants::{
     LEDGER_CANISTER_ID, PROCESSED_TX_DIGEST_KEY, QUERY_SUI_EVENTS_INTERVAL, SUFINITY_API_URL,
-    SUIX_QUERY_EVENTS, SUI_RPC_URL,
+    SUIX_QUERY_EVENTS, SUI_RPC_URL, TX_DIGEST_URL,
 };
 use event::{Event, KeyName, KeyValue, Memory};
 use ic_canister_log::log;
@@ -14,6 +14,7 @@ use ic_cdk::api::management_canister::http_request::{
 };
 use ic_cdk::{query, update};
 use icrc_ledger_types::icrc1::transfer::NumTokens;
+use models::{ExecuteTxBlockResponse, PublicKeyBS64, PublicKeyResponse, TxDigestRequest};
 use serde_json::{self};
 use std::str::FromStr;
 mod common;
@@ -26,7 +27,8 @@ use candid::{candid_method, Principal};
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
 use ic_stable_structures::{DefaultMemoryImpl, StableBTreeMap};
 use std::cell::RefCell;
-mod receipt;
+pub mod models;
+use crate::models::Receipt;
 
 thread_local! {
     static MEMORY_MANAGER: RefCell<MemoryManager<DefaultMemoryImpl>> =
@@ -55,6 +57,85 @@ fn setup_timers() {
 #[ic_cdk_macros::init]
 fn init() {
     setup_timers();
+}
+
+#[update]
+async fn withdraw(recipient: String, amount: String) -> Result<WithdrawResponse, String> {
+    let public_key = get_public_key().await.unwrap().public_key;
+    let request = get_withdraw_request(public_key.clone(), recipient, amount).await;
+    match http_request(request, 25_000_000_000).await {
+        Ok((response,)) => {
+            let result = serde_json::from_slice::<TxDigestResponse>(&response.body)
+                .map_err(|e| format!("Error: {}", e.to_string()))
+                .unwrap();
+
+            let signature = encode_signature(result.digest.clone(), public_key.clone()).await;
+            let tx_digest = execute_tx_block_sui_rpc(signature.clone(), result.tx_bytes.clone())
+                .await
+                .map_err(|e| format!("execute_tx_block_sui_rpc error {}", e))?;
+
+            return Ok(WithdrawResponse { tx_digest });
+        }
+        Err((r, m)) => {
+            log!(
+                INFO,
+                "The http_request resulted into error. RejectionCode: {r:?}, Error: {m}"
+            );
+            return Err(m.to_string());
+        }
+    };
+}
+
+#[update]
+async fn public_key() -> Result<PublicKeyBS64, String> {
+    return Ok(PublicKeyBS64 {
+        public_key: get_public_key().await.unwrap().public_key_bs64,
+    });
+}
+
+#[candid_method(query)]
+#[query]
+fn cleanup_response(raw: TransformArgs) -> HttpResponse {
+    let headers = vec![
+        HttpHeader {
+            name: "Content-Security-Policy".to_string(),
+            value: "default-src 'self'".to_string(),
+        },
+        HttpHeader {
+            name: "Referrer-Policy".to_string(),
+            value: "strict-origin".to_string(),
+        },
+        HttpHeader {
+            name: "Permissions-Policy".to_string(),
+            value: "geolocation=(self)".to_string(),
+        },
+        HttpHeader {
+            name: "Strict-Transport-Security".to_string(),
+            value: "max-age=63072000".to_string(),
+        },
+        HttpHeader {
+            name: "X-Frame-Options".to_string(),
+            value: "DENY".to_string(),
+        },
+        HttpHeader {
+            name: "X-Content-Type-Options".to_string(),
+            value: "nosniff".to_string(),
+        },
+    ];
+
+    let mut res = HttpResponse {
+        status: raw.response.status.clone(),
+        body: raw.response.body.clone(),
+        headers,
+        ..Default::default()
+    };
+
+    if res.status == 200u16 {
+        res.body = raw.response.body.clone();
+    } else {
+        ic_cdk::api::print(format!("Received error: err = {:?}", raw));
+    }
+    res
 }
 
 async fn mint() {
@@ -93,7 +174,7 @@ async fn mint() {
 
     match http_request(request, 25_000_000_000).await {
         Ok((response,)) => {
-            let trasnaction = serde_json::from_slice::<receipt::Root>(&response.body)
+            let trasnaction = serde_json::from_slice::<Receipt>(&response.body)
                 .map_err(|e| format!("Error: {}", e.to_string()));
 
             let events = &trasnaction.clone().unwrap().result.data;
@@ -185,81 +266,124 @@ async fn mint() {
     }
 }
 
-#[query]
-#[candid_method(query)]
-fn cleanup_response(raw: TransformArgs) -> HttpResponse {
-    let headers = vec![
-        HttpHeader {
-            name: "Content-Security-Policy".to_string(),
-            value: "default-src 'self'".to_string(),
-        },
-        HttpHeader {
-            name: "Referrer-Policy".to_string(),
-            value: "strict-origin".to_string(),
-        },
-        HttpHeader {
-            name: "Permissions-Policy".to_string(),
-            value: "geolocation=(self)".to_string(),
-        },
-        HttpHeader {
-            name: "Strict-Transport-Security".to_string(),
-            value: "max-age=63072000".to_string(),
-        },
-        HttpHeader {
-            name: "X-Frame-Options".to_string(),
-            value: "DENY".to_string(),
-        },
-        HttpHeader {
-            name: "X-Content-Type-Options".to_string(),
-            value: "nosniff".to_string(),
-        },
-    ];
+async fn encode_signature(digest: String, public_key: Vec<u8>) -> String {
+    let digest_decoded = Engine::decode(&STANDARD, digest)
+        .map_err(|e| format!("Error: {}", e.to_string()))
+        .unwrap();
 
-    let mut res = HttpResponse {
-        status: raw.response.status.clone(),
-        body: raw.response.body.clone(),
-        headers,
-        ..Default::default()
-    };
+    let digest: [u8; 32] = digest_decoded.try_into().unwrap();
+    let signature = sign_with_ecdsa(digest).await;
 
-    if res.status == 200u16 {
-        res.body = raw.response.body.clone();
-    } else {
-        ic_cdk::api::print(format!("Received an error from coinbase: err = {:?}", raw));
-    }
-    res
+    let flag: u8 = 0x1;
+    let mut signature_bytes: Vec<u8> = Vec::new();
+    signature_bytes.extend_from_slice(&[flag]);
+    signature_bytes.extend_from_slice(&signature.as_ref());
+    signature_bytes.extend_from_slice(&public_key.as_ref());
+
+    let signature_encoded = Engine::encode(&STANDARD, &signature_bytes[..]);
+    return signature_encoded;
 }
 
-#[update]
-async fn withdraw(msg: String) -> Result<SignatureReply, String> {
+async fn get_withdraw_request(
+    public_key: Vec<u8>,
+    recipient: String,
+    amount: String,
+) -> CanisterHttpRequestArgument {
     let context = Context {
         bucket_start_time_index: 0,
         closing_price_index: 4,
     };
 
-    let mut public_key: String = String::new();
-    let mut signature: String = "".to_string();
+    let pub_key = Engine::encode(&STANDARD, &public_key);
+    let model = TxDigestRequest {
+        public_key: pub_key.clone(),
+        recipient,
+        amount,
+    };
+    let json_string: String = match serde_json::to_string(&model) {
+        Ok(resp) => resp,
+        Err(err) => panic!("Failed to serialize: {}", err.to_string()),
+    };
+    let json_utf8: Vec<u8> = json_string.into_bytes();
+    let request_body: Option<Vec<u8>> = Some(json_utf8);
 
+    let request = CanisterHttpRequestArgument {
+        url: TX_DIGEST_URL.to_string(),
+        max_response_bytes: None,
+        method: HttpMethod::POST,
+        headers: vec![
+            HttpHeader {
+                name: "Host".to_string(),
+                value: SUFINITY_API_URL.to_string(),
+            },
+            HttpHeader {
+                name: "Content-Type".to_string(),
+                value: "application/json".to_string(),
+            },
+        ],
+        body: request_body,
+        transform: Some(TransformContext::from_name(
+            "cleanup_response".to_owned(),
+            serde_json::to_vec(&context).unwrap(),
+        )),
+    };
+    return request;
+}
+
+async fn get_public_key() -> Result<PublicKeyResponse, String> {
     let request = ECDSAPublicKey {
         canister_id: None,
         derivation_path: vec![],
         key_id: EcdsaKeyIds::TestKeyLocalDevelopment.to_key_id(),
     };
-
     let (res_public_key,): (ECDSAPublicKeyReply,) =
         ic_cdk::call(mgmt_canister_id(), "ecdsa_public_key", (request,))
             .await
             .map_err(|e| format!("ecdsa_public_key failed {}", e.1))?;
 
+    Ok(PublicKeyResponse {
+        public_key: res_public_key.public_key.clone(),
+        public_key_bs64: Engine::encode(&STANDARD, &res_public_key.public_key.clone()),
+    })
+}
+
+async fn sign_with_ecdsa(digest: [u8; 32]) -> Vec<u8> {
+    let request = SignWithECDSA {
+        message_hash: sha256(digest).to_vec(),
+        derivation_path: vec![],
+        key_id: EcdsaKeyIds::TestKeyLocalDevelopment.to_key_id(),
+    };
+
+    let (response,): (SignWithECDSAReply,) = ic_cdk::api::call::call_with_payment(
+        mgmt_canister_id(),
+        "sign_with_ecdsa",
+        (request,),
+        25_000_000_000,
+    )
+    .await
+    .map_err(|e| format!("sign_with_ecdsa failed {}", e.1))
+    .unwrap();
+
+    return response.signature;
+}
+
+async fn execute_tx_block_sui_rpc(signature: String, tx_bytes: String) -> Result<String, String> {
+    let context = Context {
+        bucket_start_time_index: 0,
+        closing_price_index: 4,
+    };
+
+    let request_json: String = format!("{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"sui_executeTransactionBlock\",\"params\": [\"{}\",[\"{}\"],null,null]}}", tx_bytes, signature).to_string();
+
     let request = CanisterHttpRequestArgument {
-        url: "https://local.sufinity:8080/tx-digest".to_string(),
+        url: SUI_RPC_URL.to_string(),
         max_response_bytes: None,
-        method: HttpMethod::GET,
+        method: HttpMethod::POST,
         headers: vec![HttpHeader {
-            name: "Host".to_string(),
-            value: SUFINITY_API_URL.to_string(),
+            name: "Content-Type".to_string(),
+            value: "application/json".to_string(),
         }],
-        body: None,
+        body: Some(request_json.to_string().into_bytes()),
         transform: Some(TransformContext::from_name(
             "cleanup_response".to_owned(),
             serde_json::to_vec(&context).unwrap(),
@@ -268,51 +392,19 @@ async fn withdraw(msg: String) -> Result<SignatureReply, String> {
 
     match http_request(request, 25_000_000_000).await {
         Ok((response,)) => {
-            let result = serde_json::from_slice::<TxDigestResponse>(&response.body)
+            let resp = serde_json::from_slice::<ExecuteTxBlockResponse>(&response.body)
                 .map_err(|e| format!("Error: {}", e.to_string()))
                 .unwrap();
-
-            let digest_decoded = Engine::decode(&STANDARD, result.digest)
-                .map_err(|e| format!("Error: {}", e.to_string()))
-                .unwrap();
-
-            let digest: [u8; 32] = digest_decoded.try_into().unwrap();
-
-            let request = SignWithECDSA {
-                message_hash: sha256(digest).to_vec(),
-                derivation_path: vec![],
-                key_id: EcdsaKeyIds::TestKeyLocalDevelopment.to_key_id(),
-            };
-
-            let (response,): (SignWithECDSAReply,) = ic_cdk::api::call::call_with_payment(
-                mgmt_canister_id(),
-                "sign_with_ecdsa",
-                (request,),
-                25_000_000_000,
-            )
-            .await
-            .map_err(|e| format!("sign_with_ecdsa failed {}", e.1))?;
-            public_key = Engine::encode(&STANDARD, &res_public_key.public_key.clone());
-
-            let flag: u8 = 0x1;
-            let mut signature_bytes: Vec<u8> = Vec::new();
-            signature_bytes.extend_from_slice(&[flag]);
-            signature_bytes.extend_from_slice(&response.signature.as_ref());
-            signature_bytes.extend_from_slice(&res_public_key.public_key.as_ref());
-
-            signature = Engine::encode(&STANDARD, &signature_bytes[..]);
+            return Ok(resp.result.digest);
         }
         Err((r, m)) => {
             log!(
                 INFO,
                 "The http_request resulted into error. RejectionCode: {r:?}, Error: {m}"
             );
+            return Err(m.to_string());
         }
     };
-    Ok(SignatureReply {
-        public_key,
-        signature,
-    })
 }
 
 fn sha256(input: [u8; 32]) -> [u8; 32] {
@@ -362,47 +454,4 @@ fn insert(key: String, value: String) -> Option<String> {
 //             .map(|(k, v)| (k.clone().0.to_string(), v.tx_digest))
 //             .collect()
 //     })
-// }
-
-// fn from_bytes(bytes: &[u8]) -> [u8; 98] {
-//     const LENGTH: usize = 98;
-//     let mut sig_bytes: [u8; 98] = [0; LENGTH];
-//     sig_bytes.copy_from_slice(bytes);
-//     sig_bytes
-// }
-
-// async fn get_public_key() -> Result<Vec<u8>, String> {
-//     let context = Context {
-//         bucket_start_time_index: 0,
-//         closing_price_index: 4,
-//     };
-//     let public_key_req = CanisterHttpRequestArgument {
-//         url: "https://local.sufinity:8080/public-key".to_string(),
-//         max_response_bytes: None,
-//         method: HttpMethod::GET,
-//         headers: vec![HttpHeader {
-//             name: "Host".to_string(),
-//             value: format!("https://local.sufinity:8080"),
-//         }],
-//         body: None,
-//         transform: Some(TransformContext::from_name(
-//             "cleanup_response".to_owned(),
-//             serde_json::to_vec(&context).unwrap(),
-//         )),
-//     };
-
-//     let pub_key = match http_request(public_key_req, 25_000_000_000).await {
-//         Ok((response,)) => {
-//             let public_key = &response.body;
-//             Ok(public_key.clone())
-//         }
-//         Err((r, m)) => {
-//             let message =
-//                 format!("The http_request resulted into error. RejectionCode: {r:?}, Error: {m}");
-
-//             //Return the error as a string and end the method
-//             Err(message)
-//         }
-//     };
-//     return pub_key;
 // }
