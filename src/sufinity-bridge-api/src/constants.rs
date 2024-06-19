@@ -1,0 +1,3 @@
+pub const SIGNER: &str = "0xe857be0cd6856e40109043b2069d46ca0b853581439db7427113f92234f2ac9e";
+pub const GAS_OBJECT_ID: &str =
+    "0x6c0576efd7bf438cc13cb18fbd6bf6f26c4c3f66024037a722fe0e6a5a4b4fa9";
