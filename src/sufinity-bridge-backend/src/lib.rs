@@ -13,8 +13,12 @@ use ic_cdk::api::management_canister::http_request::{
     TransformContext,
 };
 use ic_cdk::{query, update};
+use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::NumTokens;
-use models::{ExecuteTxBlockResponse, PublicKeyBS64, PublicKeyResponse, TxDigestRequest};
+use icrc_ledger_types::icrc2::transfer_from::TransferFromArgs;
+use models::{
+    ExecuteTxBlockResponse, PublicKeyBS64, PublicKeyResponse, TransferWithdrawArgs, TxDigestRequest,
+};
 use serde_json::{self};
 use std::str::FromStr;
 mod common;
@@ -23,12 +27,14 @@ mod event;
 mod logs;
 use crate::logs::INFO;
 use base64::{self, engine::general_purpose::STANDARD, Engine};
-use candid::{candid_method, Principal};
+use candid::{candid_method, Nat, Principal};
 use ic_stable_structures::memory_manager::{MemoryId, MemoryManager};
 use ic_stable_structures::{DefaultMemoryImpl, StableBTreeMap};
 use std::cell::RefCell;
 pub mod models;
 use crate::models::Receipt;
+use icrc_ledger_types::icrc1::transfer::BlockIndex;
+use icrc_ledger_types::icrc2::transfer_from::TransferFromError;
 
 thread_local! {
     static MEMORY_MANAGER: RefCell<MemoryManager<DefaultMemoryImpl>> =
@@ -60,9 +66,39 @@ fn init() {
 }
 
 #[update]
-async fn withdraw(recipient: String, amount: String) -> Result<WithdrawResponse, String> {
+async fn public_key() -> Result<PublicKeyBS64, String> {
+    return Ok(PublicKeyBS64 {
+        public_key: get_public_key().await.unwrap().public_key_bs64,
+    });
+}
+
+#[update]
+async fn withdraw(args: TransferWithdrawArgs) -> Result<WithdrawResponse, String> {
+    let transfer_from_args = TransferFromArgs {
+        from: Account::from(ic_cdk::caller()),
+        memo: None,
+        amount: Nat::from_str(&args.amount.clone()).unwrap(),
+        spender_subaccount: None,
+        fee: None,
+        to: args.to_account,
+        created_at_time: None,
+    };
+
+    ic_cdk::call::<(TransferFromArgs,), (Result<BlockIndex, TransferFromError>,)>(
+        Principal::from_text("mxzaz-hqaaa-aaaar-qaada-cai").unwrap(),
+        "icrc2_transfer_from",
+        (transfer_from_args,),
+    )
+    .await
+    .map_err(|e| format!("failed to call ledger: {:?}", e))?
+    .0
+    .map_err(|e| format!("ledger transfer error {:?}", e))
+    .unwrap();
+
     let public_key = get_public_key().await.unwrap().public_key;
-    let request = get_withdraw_request(public_key.clone(), recipient, amount).await;
+
+    let request =
+        get_withdraw_request(public_key.clone(), args.recipient, args.amount.clone()).await;
     match http_request(request, 25_000_000_000).await {
         Ok((response,)) => {
             let result = serde_json::from_slice::<TxDigestResponse>(&response.body)
@@ -84,13 +120,6 @@ async fn withdraw(recipient: String, amount: String) -> Result<WithdrawResponse,
             return Err(m.to_string());
         }
     };
-}
-
-#[update]
-async fn public_key() -> Result<PublicKeyBS64, String> {
-    return Ok(PublicKeyBS64 {
-        public_key: get_public_key().await.unwrap().public_key_bs64,
-    });
 }
 
 #[candid_method(query)]
@@ -293,7 +322,7 @@ async fn get_withdraw_request(
         bucket_start_time_index: 0,
         closing_price_index: 4,
     };
-
+    log!(INFO, "Amount: {:?}", amount);
     let pub_key = Engine::encode(&STANDARD, &public_key);
     let model = TxDigestRequest {
         public_key: pub_key.clone(),
@@ -308,7 +337,7 @@ async fn get_withdraw_request(
     let request_body: Option<Vec<u8>> = Some(json_utf8);
 
     let request = CanisterHttpRequestArgument {
-        url: TX_DIGEST_URL.to_string(),
+        url: "https://local.sufinity:8080/tx-digest".to_string(),
         max_response_bytes: None,
         method: HttpMethod::POST,
         headers: vec![

@@ -1,10 +1,14 @@
 
 
+type Account = record { owner : principal; subaccount : opt blob };
+type Result = variant { Ok : nat; Err : text };
+type TransferArgsWithdraw = record { to_account : Account; amount : text; recipient: text; };
+
 service : () -> {
     // "total_events": () -> (nat64) query;
     // "get_events": () -> (text,text) query;
     // "get_one": () -> (text) query;
-    "withdraw" : (recipient: text, amount: text) -> (variant { Ok: record { tx_digest: text; }; Err: text });
+    "withdraw" : (TransferArgsWithdraw)-> (variant { Ok: record { tx_digest: text; }; Err: text });
     "public_key" : () -> (variant { Ok: record { public_key: text; }; Err: text });
 }
 

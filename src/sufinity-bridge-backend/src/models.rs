@@ -1,4 +1,5 @@
 use candid::CandidType;
+use icrc_ledger_types::icrc1::account::Account;
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
 
@@ -163,4 +164,11 @@ pub struct PublicKeyResponse {
 #[derive(CandidType, Serialize, Debug)]
 pub struct PublicKeyBS64 {
     pub public_key: String,
+}
+
+#[derive(CandidType, Deserialize, Serialize)]
+pub struct TransferWithdrawArgs {
+    pub amount: String,
+    pub to_account: Account,
+    pub recipient: String,
 }

@@ -101,3 +101,36 @@ dfx canister call icrc1_ledger_canister icrc1_transfer "(record {
   amount = 1_000_000_000;
 })"
 ```
+
+# Withdraw functionality
+
+# 1 Step: Approve trasnfer
+
+```bash
+dfx canister call --identity ${PRINCIPAL_NAME} icrc1_ledger_canister icrc2_approve "(
+  record {
+    spender= record {
+      owner = principal \"$(dfx canister id minter)\";
+    };
+    amount = ${AMOUNT_IN_NAT}: nat;
+  }
+)"
+```
+
+- PRINCIPAL_NAME: for example default
+- AMOUNT_IN_NAT: 1_000_000_000;
+
+# 2 Step
+
+```bash
+ dfx canister call minter withdraw "(record {
+  amount = \"${AMOUNT}\";
+  to_account = record {
+    owner = principal \"$(dfx canister id icrc1_ledger_canister)\";
+  };
+  recipient = \"${RECIPIENT_SUI _ADDRESS}\"
+})"
+```
+
+- AMOUNT - string format 100000000 - it's like 0.1 SUI
+- RECIPIENT_SUI \_ADDRESS - sui compatible address string
