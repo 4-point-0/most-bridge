@@ -4,7 +4,7 @@ use common::{
 };
 use constants::{
     LEDGER_CANISTER_ID, PROCESSED_TX_DIGEST_KEY, QUERY_SUI_EVENTS_INTERVAL, SUFINITY_API_URL,
-    SUIX_QUERY_EVENTS, SUI_RPC_URL, TX_DIGEST_URL,
+    SUIX_QUERY_EVENTS, SUI_PACKAGE_ID, SUI_RPC_URL, TX_DIGEST_URL,
 };
 use event::{Event, KeyName, KeyValue, Memory};
 use ic_canister_log::log;
@@ -183,7 +183,7 @@ async fn mint() {
 
     if tx_digest_cursor != None {
         tx_digest_value = tx_digest_cursor.as_ref().unwrap();
-        suix_query_events = format!("{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"suix_queryEvents\",\"params\":[{{\"MoveModule\":{{\"package\":\"0x44720817255b799b5c23d722568e850d07db51bf52b9c0425b3b16a1fe5f21a0\",\"module\": \"ckSuiHelper\"}}}},{{\"txDigest\":\"{}\", \"eventSeq\": \"0\"}},2,false]}}", tx_digest_value);
+        suix_query_events = format!("{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"suix_queryEvents\",\"params\":[{{\"MoveModule\":{{\"package\":\"{}\",\"module\": \"ckSuiHelper\"}}}},{{\"txDigest\":\"{}\", \"eventSeq\": \"0\"}},2,false]}}",SUI_PACKAGE_ID, tx_digest_value);
     }
 
     let request = CanisterHttpRequestArgument {
@@ -337,7 +337,7 @@ async fn get_withdraw_request(
     let request_body: Option<Vec<u8>> = Some(json_utf8);
 
     let request = CanisterHttpRequestArgument {
-        url: "https://local.sufinity:8080/tx-digest".to_string(),
+        url: TX_DIGEST_URL.to_string(),
         max_response_bytes: None,
         method: HttpMethod::POST,
         headers: vec![
