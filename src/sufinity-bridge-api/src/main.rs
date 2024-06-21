@@ -1,18 +1,19 @@
+use actix_settings::{ApplySettings as _, BasicSettings, Mode};
 use actix_web::{
     body::BoxBody,
-    http::{header::ContentType, KeepAlive},
-    middleware::Logger,
+    http::header::ContentType,
+    middleware::{Compress, Condition, Logger},
     post, web, App, Error, HttpRequest, HttpResponse, HttpServer, Responder,
 };
 use base64::{self, engine::general_purpose::STANDARD, Engine};
-use constants::{GAS_OBJECT_ID, SIGNER};
+use constants::GAS_BUDGET;
 use fastcrypto::{
     encoding::{Base64, Encoding},
     hash::HashFunction,
 };
 use models::{PaySuiRequest, PaySuiResponse, TxDigestRequest};
 use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use shared_crypto::intent::{Intent, IntentMessage};
 use sui_types::transaction::TransactionData;
 mod constants;
@@ -22,6 +23,15 @@ mod models;
 struct Reply {
     pub digest: String,
     pub tx_bytes: String,
+}
+
+#[derive(Deserialize, Clone)]
+struct ApplicationSettings {
+    pub signer: String,
+    pub gas_object_id: String,
+    pub mainnet_url: String,
+    pub testnet_url: String,
+    pub address_ssl: String,
 }
 
 impl Responder for Reply {
@@ -37,8 +47,11 @@ impl Responder for Reply {
 }
 
 #[post("/tx-digest")]
-async fn tx_digest(dto: web::Json<TxDigestRequest>) -> Result<Reply, Error> {
-    match transfer_sui(dto.clone()).await {
+async fn tx_digest(
+    dto: web::Json<TxDigestRequest>,
+    settings: web::Data<BasicSettings<ApplicationSettings>>,
+) -> Result<Reply, Error> {
+    match transfer_sui(dto.clone(), settings).await {
         Ok(tx_bytes) => {
             let decoded = Engine::decode(&STANDARD, tx_bytes.clone()).unwrap();
             let tx_data: TransactionData = bcs::from_bytes(&decoded).unwrap();
@@ -64,22 +77,28 @@ async fn tx_digest(dto: web::Json<TxDigestRequest>) -> Result<Reply, Error> {
     }
 }
 
-async fn transfer_sui(dto: TxDigestRequest) -> Result<std::string::String, reqwest::Error> {
+async fn transfer_sui(
+    dto: TxDigestRequest,
+    settings: web::Data<BasicSettings<ApplicationSettings>>,
+) -> Result<std::string::String, reqwest::Error> {
     let model: PaySuiRequest = PaySuiRequest {
         jsonrpc: "2.0".to_string(),
         id: 1,
         method: "unsafe_transferSui".to_string(),
         params: vec![
-            SIGNER.to_string(),        //signer
-            GAS_OBJECT_ID.to_string(), //sui_object_id
-            "100000000".to_string(),   //gas budget
-            dto.recipient,             //recipient
-            dto.amount,                //amount
+            settings.application.signer.to_string(),        //signer
+            settings.application.gas_object_id.to_string(), //sui_object_id
+            GAS_BUDGET.to_string(),                         //gas budget
+            dto.recipient,                                  //recipient
+            dto.amount,                                     //amount
         ],
     };
 
     let response = reqwest::Client::new()
-        .post("https://fullnode.testnet.sui.io/")
+        .post(match settings.actix.mode {
+            Mode::Development => settings.application.testnet_url.to_string(),
+            Mode::Production => settings.application.mainnet_url.to_string(),
+        })
         .json(&model)
         .send()
         .await?;
@@ -89,45 +108,55 @@ async fn transfer_sui(dto: TxDigestRequest) -> Result<std::string::String, reqwe
     return Ok(resp.result.tx_bytes);
 }
 
-// async fn gas_price() -> Result<String, reqwest::Error> {
-//     let model = ReferenceGasPriceRequest {
-//         jsonrpc: "2.0".to_string(),
-//         id: 1,
-//         method: "suix_getReferenceGasPrice".to_string(),
-//         params: vec![],
-//     };
-
-//     let response = reqwest::Client::new()
-//         .post("https://fullnode.testnet.sui.io/")
-//         .json(&model)
-//         .send()
-//         .await?;
-
-//     let resp = response.json::<ReferenceGasPriceResponse>().await?;
-//     info!("Gas price response {}", resp.result);
-//     Ok(resp.result)
-// }
-
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    std::env::set_var("RUST_LOG", "info");
-    std::env::set_var("RUST_BACKTRACE", "1");
-    env_logger::init();
+    let settings =
+        BasicSettings::<ApplicationSettings>::parse_toml("src/sufinity-bridge-api/config.toml")
+            .expect("Failed to parse `Settings` from config.toml");
 
     let mut builder = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
     builder
-        .set_private_key_file("src/sufinity-bridge-api/cert/key.pem", SslFiletype::PEM)
+        .set_private_key_file(settings.clone().actix.tls.private_key, SslFiletype::PEM)
         .unwrap();
     builder
-        .set_certificate_chain_file("src/sufinity-bridge-api/cert/cert.pem")
+        .set_certificate_chain_file(settings.clone().actix.tls.certificate)
         .unwrap();
 
-    HttpServer::new(|| {
-        let logger = Logger::default();
-        App::new().wrap(logger).service(tx_digest)
+    init_logger(&settings);
+
+    HttpServer::new({
+        let settings = settings.clone();
+        move || {
+            App::new()
+                .wrap(Condition::new(
+                    settings.actix.enable_compression,
+                    Compress::default(),
+                ))
+                .wrap(Logger::default())
+                .app_data(web::Data::new(settings.clone()))
+                .service(tx_digest)
+        }
     })
-    .keep_alive(KeepAlive::Os)
-    .bind_openssl("[::1]:8080", builder)?
+    .apply_settings(&settings)
+    .bind_openssl(settings.application.address_ssl, builder)?
     .run()
     .await
+}
+
+fn init_logger(settings: &BasicSettings<ApplicationSettings>) {
+    if !settings.actix.enable_log {
+        return;
+    }
+
+    std::env::set_var(
+        "RUST_LOG",
+        match settings.actix.mode {
+            Mode::Development => "actix_web=debug",
+            Mode::Production => "actix_web=info",
+        },
+    );
+
+    std::env::set_var("RUST_BACKTRACE", "1");
+
+    env_logger::init();
 }
