@@ -28,3 +28,6 @@ dist/
 .env
 
 cert/*
+
+
+src/sufinity-bridge-api/config.toml
