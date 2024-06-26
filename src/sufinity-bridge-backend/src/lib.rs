@@ -4,7 +4,8 @@ use common::{
 };
 use constants::{
     LEDGER_CANISTER_ID, PROCESSED_TX_DIGEST_KEY, QUERY_SUI_EVENTS_INTERVAL, SUFINITY_API_URL,
-    SUIX_QUERY_EVENTS, SUI_PACKAGE_ID, SUI_RPC_URL, TX_DIGEST_URL,
+    SUI_LOCAL_MGMT_PRINCIPAL_ID, SUI_MODULE_ID, SUI_PACKAGE_ID, SUI_RPC_URL, TEST_API_KEY,
+    TX_DIGEST_URL,
 };
 use event::{Event, KeyName, KeyValue, Memory};
 use ic_canister_log::log;
@@ -67,8 +68,16 @@ fn init() {
 
 #[update]
 async fn public_key() -> Result<PublicKeyBS64, String> {
+    let public_key_response = get_public_key()
+        .await
+        .map_err(|e| format!("get_public_key failed {:?}", e));
+
+    if public_key_response.is_err() {
+        return Err(public_key_response.unwrap_err());
+    }
+
     return Ok(PublicKeyBS64 {
-        public_key: get_public_key().await.unwrap().public_key_bs64,
+        public_key: public_key_response.unwrap().public_key_bs64,
     });
 }
 
@@ -84,29 +93,43 @@ async fn withdraw(args: TransferWithdrawArgs) -> Result<WithdrawResponse, String
         created_at_time: None,
     };
 
-    ic_cdk::call::<(TransferFromArgs,), (Result<BlockIndex, TransferFromError>,)>(
-        Principal::from_text("mxzaz-hqaaa-aaaar-qaada-cai").unwrap(),
+    let result = ic_cdk::call::<(TransferFromArgs,), (Result<BlockIndex, TransferFromError>,)>(
+        Principal::from_text(LEDGER_CANISTER_ID).unwrap(),
         "icrc2_transfer_from",
         (transfer_from_args,),
     )
     .await
     .map_err(|e| format!("failed to call ledger: {:?}", e))?
     .0
-    .map_err(|e| format!("ledger transfer error {:?}", e))
-    .unwrap();
+    .map_err(|e| format!("ledger transfer error {:?}", e));
 
-    let public_key = get_public_key().await.unwrap().public_key;
+    if result.is_err() {
+        return Err(result.unwrap_err());
+    }
 
-    let request =
-        get_withdraw_request(public_key.clone(), args.recipient, args.amount.clone()).await;
+    let public_key_response = get_public_key()
+        .await
+        .map_err(|e| format!("get_public_key failed {:?}", e));
+
+    if public_key_response.is_err() {
+        return Err(public_key_response.unwrap_err());
+    }
+
+    let public_key = public_key_response.unwrap().public_key;
+
+    let request = get_withdraw_request(public_key.clone(), args.recipient, args.amount.clone());
     match http_request(request, 25_000_000_000).await {
         Ok((response,)) => {
-            let result = serde_json::from_slice::<TxDigestResponse>(&response.body)
-                .map_err(|e| format!("Error: {}", e.to_string()))
-                .unwrap();
+            let result = serde_json::from_slice::<TxDigestResponse>(&response.body);
 
-            let signature = encode_signature(result.digest.clone(), public_key.clone()).await;
-            let tx_digest = execute_tx_block_sui_rpc(signature.clone(), result.tx_bytes.clone())
+            if result.is_err() {
+                return Err("Failed to get tx digest".to_string());
+            }
+
+            let TxDigestResponse { digest, tx_bytes } = result.unwrap();
+
+            let signature = encode_signature(digest.clone(), public_key.clone()).await;
+            let tx_digest = execute_tx_block_sui_rpc(signature.clone(), tx_bytes.clone())
                 .await
                 .map_err(|e| format!("execute_tx_block_sui_rpc error {}", e))?;
 
@@ -178,12 +201,12 @@ async fn mint() {
     };
 
     let tx_digest_cursor = self::get(PROCESSED_TX_DIGEST_KEY.to_string());
-    let mut suix_query_events = SUIX_QUERY_EVENTS.to_string();
+    let mut suix_query_events = format!("{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"suix_queryEvents\",\"params\":[{{\"MoveModule\":{{\"package\":\"{}\",\"module\": \"{}\"}},null,18000,false]}}",SUI_PACKAGE_ID, SUI_MODULE_ID);
     let mut tx_digest_value = "";
 
     if tx_digest_cursor != None {
         tx_digest_value = tx_digest_cursor.as_ref().unwrap();
-        suix_query_events = format!("{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"suix_queryEvents\",\"params\":[{{\"MoveModule\":{{\"package\":\"{}\",\"module\": \"ckSuiHelper\"}}}},{{\"txDigest\":\"{}\", \"eventSeq\": \"0\"}},2,false]}}",SUI_PACKAGE_ID, tx_digest_value);
+        suix_query_events = format!("{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"suix_queryEvents\",\"params\":[{{\"MoveModule\":{{\"package\":\"{}\",\"module\": \"{}\"}}}},{{\"txDigest\":\"{}\", \"eventSeq\": \"0\"}},2,false]}}",SUI_PACKAGE_ID,SUI_MODULE_ID, tx_digest_value);
     }
 
     let request = CanisterHttpRequestArgument {
@@ -205,6 +228,11 @@ async fn mint() {
         Ok((response,)) => {
             let trasnaction = serde_json::from_slice::<Receipt>(&response.body)
                 .map_err(|e| format!("Error: {}", e.to_string()));
+
+            if trasnaction.is_err() {
+                log!(INFO, "{}", trasnaction.unwrap_err());
+                return;
+            }
 
             let events = &trasnaction.clone().unwrap().result.data;
 
@@ -313,7 +341,7 @@ async fn encode_signature(digest: String, public_key: Vec<u8>) -> String {
     return signature_encoded;
 }
 
-async fn get_withdraw_request(
+fn get_withdraw_request(
     public_key: Vec<u8>,
     recipient: String,
     amount: String,
@@ -322,7 +350,6 @@ async fn get_withdraw_request(
         bucket_start_time_index: 0,
         closing_price_index: 4,
     };
-    log!(INFO, "Amount: {:?}", amount);
     let pub_key = Engine::encode(&STANDARD, &public_key);
     let model = TxDigestRequest {
         public_key: pub_key.clone(),
@@ -349,6 +376,10 @@ async fn get_withdraw_request(
                 name: "Content-Type".to_string(),
                 value: "application/json".to_string(),
             },
+            HttpHeader {
+                name: "X-API-Key".to_string(),
+                value: TEST_API_KEY.to_string(),
+            },
         ],
         body: request_body,
         transform: Some(TransformContext::from_name(
@@ -365,10 +396,14 @@ async fn get_public_key() -> Result<PublicKeyResponse, String> {
         derivation_path: vec![],
         key_id: EcdsaKeyIds::TestKeyLocalDevelopment.to_key_id(),
     };
-    let (res_public_key,): (ECDSAPublicKeyReply,) =
+    let (res_public_key, error_public_key): (ECDSAPublicKeyReply, String) =
         ic_cdk::call(mgmt_canister_id(), "ecdsa_public_key", (request,))
             .await
             .map_err(|e| format!("ecdsa_public_key failed {}", e.1))?;
+
+    if error_public_key.len() > 0 {
+        return Err(error_public_key);
+    }
 
     Ok(PublicKeyResponse {
         public_key: res_public_key.public_key.clone(),
@@ -444,7 +479,7 @@ fn sha256(input: [u8; 32]) -> [u8; 32] {
 }
 
 fn mgmt_canister_id() -> Principal {
-    Principal::from_str(&"aaaaa-aa").unwrap()
+    return Principal::from_str(SUI_LOCAL_MGMT_PRINCIPAL_ID).unwrap();
 }
 
 fn insert_event(key: String, value: Event) -> Option<Event> {
@@ -459,28 +494,3 @@ fn insert(key: String, value: String) -> Option<String> {
     MAP.with(|p| p.borrow_mut().insert(KeyName(key), KeyValue(value)))
         .map(|v| v.0)
 }
-
-// #[ic_cdk::query]
-// async fn total_events() -> u64 {
-//     EVENTS.with(|events| events.borrow().len())
-// }
-
-// #[ic_cdk::query]
-// async fn get_one() -> String {
-//     EVENTS.with(|events| {
-//         events.borrow_mut().iter().for_each(|(k, v)| {
-//             log!(INFO, "Key: {}, Value: {:?}", k.0, v.tx_digest);
-//         })
-//     });
-//     return "test".to_string();
-// }
-
-// #[ic_cdk::query]
-// async fn get_events() -> Vec<(String, String)> {
-//     EVENTS.with(|t| {
-//         t.borrow()
-//             .iter()
-//             .map(|(k, v)| (k.clone().0.to_string(), v.tx_digest))
-//             .collect()
-//     })
-// }

@@ -1,6 +1,4 @@
-# ICP denominations
-
-- 1 ICP is equal to 10^8 e8
+# SUFINITY BRIDGE BACKEND
 
 # Setting up ledger and minter locally
 
