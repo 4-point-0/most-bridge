@@ -1,12 +1,10 @@
 use actix_settings::{ApplySettings as _, BasicSettings, Mode};
 use actix_web::{
     body::BoxBody,
-    error::ErrorUnauthorized,
+    error::{ErrorBadRequest, ErrorUnauthorized},
     http::header::{self, ContentType},
     middleware::{Compress, Condition, Logger},
-    post,
-    web::{self},
-    App, Error as ActixError, HttpRequest, HttpResponse, HttpServer, Responder,
+    post, web, App, Error as ActixError, HttpRequest, HttpResponse, HttpServer, Responder,
 };
 use base64::{self, engine::general_purpose::STANDARD, Engine};
 use constants::GAS_BUDGET;
@@ -58,9 +56,15 @@ async fn tx_digest(
     dto: web::Json<TxDigestRequest>,
     settings: web::Data<BasicSettings<ApplicationSettings>>,
 ) -> Result<Reply, ActixError> {
-    let api_key_header = _req.headers().get("X-API-Key").unwrap().to_str().unwrap();
+    let api_key_header = _req.headers().get("X-API-Key");
 
-    if api_key_header != settings.application.api_key.to_string() {
+    if api_key_header.is_none() {
+        return Err(ErrorBadRequest("Unathorized access"));
+    }
+
+    let api_key = api_key_header.unwrap().to_str().unwrap();
+
+    if api_key != settings.application.api_key.to_string() {
         return Err(ErrorUnauthorized("Unathorized access"));
     }
     match transfer_sui(dto.clone(), settings).await {
