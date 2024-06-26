@@ -26,3 +26,8 @@ dist/
 
 # environment variables
 .env
+
+cert/*
+
+
+src/sufinity-bridge-api/config.toml

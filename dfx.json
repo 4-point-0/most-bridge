@@ -1,9 +1,20 @@
 {
   "canisters": {
-    "sufinity-bridge-backend": {
-      "candid": "src/sufinity-bridge-backend/sufinity-bridge-backend.did",
-      "package": "sufinity-bridge-backend",
+    "minter": {
+      "candid": "src/sufinity-bridge-backend/cksui_minter.did",
+      "package": "minter",
       "type": "rust"
+    },
+    "icrc1_ledger_canister": {
+      "type": "custom",
+      "candid": "icrc1_ledger.did",
+      "wasm": "icrc1_ledger.wasm.gz",
+      "specified_id": "mxzaz-hqaaa-aaaar-qaada-cai"
+    },
+    "icrc1_index_canister": {
+      "type": "custom",
+      "candid": "icrc1_index.did",
+      "wasm": "icrc1_index.wasm.gz"
     }
   },
   "defaults": {
