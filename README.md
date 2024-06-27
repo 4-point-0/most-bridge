@@ -2,10 +2,10 @@
 
 This project consists of 4 repos:
 
-- sufinty-bridge-api - api that provides data for querying SUI_RPC
-- sufinity-bridge-backend - canister for minting and withdrawing ckSUI tokens
-- sufinity-bridge-helper - generating sui address from base64 public key
-- sufinity-ck-sui-helper - sui smart contract for depositing SUI tokens to minter
+- `sufinty-bridge-api` - api that provides data for querying SUI_RPC
+- `sufinity-bridge-backend` - canister for minting and withdrawing ckSUI tokens
+- `sufinity-bridge-helper` - generating sui address from base64 public key
+- `sufinity-ck-sui-helper` - sui smart contract for depositing SUI tokens to minter
 
 # Setup
 
