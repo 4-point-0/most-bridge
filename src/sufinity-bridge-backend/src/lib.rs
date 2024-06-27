@@ -4,8 +4,7 @@ use common::{
 };
 use constants::{
     LEDGER_CANISTER_ID, PROCESSED_TX_DIGEST_KEY, QUERY_SUI_EVENTS_INTERVAL, SUFINITY_API_URL,
-    SUI_LOCAL_MGMT_PRINCIPAL_ID, SUI_MODULE_ID, SUI_PACKAGE_ID, SUI_RPC_URL, TEST_API_KEY,
-    TX_DIGEST_URL,
+    SUI_LOCAL_MGMT_PRINCIPAL_ID, SUI_MODULE_ID, SUI_PACKAGE_ID, SUI_RPC_URL, TX_DIGEST_URL,
 };
 use event::{Event, KeyName, KeyValue, Memory};
 use ic_canister_log::log;
@@ -375,10 +374,6 @@ fn get_withdraw_request(
             HttpHeader {
                 name: "Content-Type".to_string(),
                 value: "application/json".to_string(),
-            },
-            HttpHeader {
-                name: "X-API-Key".to_string(),
-                value: TEST_API_KEY.to_string(),
             },
         ],
         body: request_body,
