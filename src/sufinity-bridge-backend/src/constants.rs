@@ -9,4 +9,3 @@ pub const SUI_PACKAGE_ID: &str = "";
 pub const SUI_MODULE_ID: &str = "";
 pub const SUFINITY_API_URL: &str = "https://local.sufinity:8080";
 pub const TX_DIGEST_URL: &str = "https://local.sufinity:8080/tx-digest";
-pub const TEST_API_KEY: &str = "123";

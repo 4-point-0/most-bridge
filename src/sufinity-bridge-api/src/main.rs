@@ -1,7 +1,6 @@
 use actix_settings::{ApplySettings as _, BasicSettings, Mode};
 use actix_web::{
     body::BoxBody,
-    error::{ErrorBadRequest, ErrorUnauthorized},
     http::header::{self, ContentType},
     middleware::{Compress, Condition, Logger},
     post, web, App, Error as ActixError, HttpRequest, HttpResponse, HttpServer, Responder,
@@ -34,7 +33,6 @@ struct ApplicationSettings {
     pub mainnet_url: String,
     pub testnet_url: String,
     pub address_ssl: String,
-    pub api_key: String,
     pub origin_url: String,
 }
 
@@ -52,21 +50,9 @@ impl Responder for Reply {
 
 #[post("/tx-digest")]
 async fn tx_digest(
-    _req: HttpRequest,
     dto: web::Json<TxDigestRequest>,
     settings: web::Data<BasicSettings<ApplicationSettings>>,
 ) -> Result<Reply, ActixError> {
-    let api_key_header = _req.headers().get("X-API-Key");
-
-    if api_key_header.is_none() {
-        return Err(ErrorBadRequest("Unathorized access"));
-    }
-
-    let api_key = api_key_header.unwrap().to_str().unwrap();
-
-    if api_key != settings.application.api_key.to_string() {
-        return Err(ErrorUnauthorized("Unathorized access"));
-    }
     match transfer_sui(dto.clone(), settings).await {
         Ok(tx_bytes) => {
             let decoded = Engine::decode(&STANDARD, tx_bytes.clone()).unwrap();
@@ -156,8 +142,6 @@ async fn main() -> std::io::Result<()> {
                         .allowed_origin(settings.application.origin_url.as_str())
                         // set allowed methods list
                         .allowed_methods(vec!["GET", "POST"])
-                        // set allowed request header list
-                        .allowed_headers(&[header::AUTHORIZATION, header::ACCEPT])
                         // add header to allowed list
                         .allowed_header(header::CONTENT_TYPE)
                         // set list of headers that are safe to expose

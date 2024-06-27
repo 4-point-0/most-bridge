@@ -75,6 +75,5 @@ gas_budget = "1000000000"
 testnet_url="https://fullnode.testnet.sui.io/"
 mainnet_url="https://fullnode.mainnet.sui.io/"
 address_ssl="[::1]:8080"
-api_key=""
 origin_url="http://localhost:3000"
 
