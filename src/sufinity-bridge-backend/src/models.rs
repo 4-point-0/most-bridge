@@ -172,3 +172,14 @@ pub struct TransferWithdrawArgs {
     pub to_account: Account,
     pub recipient: String,
 }
+
+#[derive(CandidType, Deserialize, Serialize)]
+pub struct InitArgs {
+    pub ledger_canister_id: String,
+    pub local_mgmt_principal_id: String,
+    pub sui_package_id: String,
+    pub sui_module_id: String,
+    pub sufinity_api_url: String,
+    pub tx_digest_url: String,
+    pub is_local: String,
+}

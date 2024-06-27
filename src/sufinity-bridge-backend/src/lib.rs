@@ -3,8 +3,8 @@ use common::{
     TxDigestResponse, WithdrawResponse,
 };
 use constants::{
-    LEDGER_CANISTER_ID, PROCESSED_TX_DIGEST_KEY, QUERY_SUI_EVENTS_INTERVAL, SUFINITY_API_URL,
-    SUI_LOCAL_MGMT_PRINCIPAL_ID, SUI_MODULE_ID, SUI_PACKAGE_ID, SUI_RPC_URL, TX_DIGEST_URL,
+    LEDGER_CANISTER_ID_KEY, PROCESSED_TX_DIGEST_KEY, QUERY_SUI_EVENTS_INTERVAL,
+    SUI_MAINNET_RPC_URL, SUI_MODULE_ID_KEY, SUI_PACKAGE_ID_KEY, SUI_TESTNET_RPC_URL,
 };
 use event::{Event, KeyName, KeyValue, Memory};
 use ic_canister_log::log;
@@ -17,7 +17,8 @@ use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::NumTokens;
 use icrc_ledger_types::icrc2::transfer_from::TransferFromArgs;
 use models::{
-    ExecuteTxBlockResponse, PublicKeyBS64, PublicKeyResponse, TransferWithdrawArgs, TxDigestRequest,
+    ExecuteTxBlockResponse, InitArgs, PublicKeyBS64, PublicKeyResponse, TransferWithdrawArgs,
+    TxDigestRequest,
 };
 use serde_json::{self};
 use std::str::FromStr;
@@ -61,22 +62,48 @@ fn setup_timers() {
 }
 
 #[ic_cdk_macros::init]
-fn init() {
+fn init(args: InitArgs) {
     setup_timers();
+    let InitArgs {
+        ledger_canister_id,
+        local_mgmt_principal_id,
+        sui_package_id,
+        sui_module_id,
+        sufinity_api_url,
+        tx_digest_url,
+        is_local,
+    } = args;
+
+    if ledger_canister_id == ""
+        || local_mgmt_principal_id == ""
+        || sui_package_id == ""
+        || sui_module_id == ""
+        || sufinity_api_url == ""
+        || tx_digest_url == ""
+        || is_local == ""
+    {
+        log!(INFO, "Missing required arguments");
+        return;
+    }
+    self::insert(
+        constants::LEDGER_CANISTER_ID_KEY.to_string(),
+        ledger_canister_id,
+    );
+    self::insert(
+        constants::LOCAL_MGMT_PRINCIPAL_ID_KEY.to_string(),
+        local_mgmt_principal_id,
+    );
+    self::insert(constants::SUI_PACKAGE_ID_KEY.to_string(), sui_package_id);
+    self::insert(constants::SUI_MODULE_ID_KEY.to_string(), sui_module_id);
+    self::insert(constants::API_URL_KEY.to_string(), sufinity_api_url);
+    self::insert(constants::TX_DIGEST_URL_KEY.to_string(), tx_digest_url);
+    self::insert(constants::IS_LOCAL_KEY.to_string(), is_local.to_string());
 }
 
 #[update]
 async fn public_key() -> Result<PublicKeyBS64, String> {
-    let public_key_response = get_public_key()
-        .await
-        .map_err(|e| format!("get_public_key failed {:?}", e));
-
-    if public_key_response.is_err() {
-        return Err(public_key_response.unwrap_err());
-    }
-
     return Ok(PublicKeyBS64 {
-        public_key: public_key_response.unwrap().public_key_bs64,
+        public_key: get_public_key().await.unwrap().public_key_bs64,
     });
 }
 
@@ -93,7 +120,7 @@ async fn withdraw(args: TransferWithdrawArgs) -> Result<WithdrawResponse, String
     };
 
     let result = ic_cdk::call::<(TransferFromArgs,), (Result<BlockIndex, TransferFromError>,)>(
-        Principal::from_text(LEDGER_CANISTER_ID).unwrap(),
+        Principal::from_text(self::get(LEDGER_CANISTER_ID_KEY.to_string()).unwrap()).unwrap(),
         "icrc2_transfer_from",
         (transfer_from_args,),
     )
@@ -200,16 +227,16 @@ async fn mint() {
     };
 
     let tx_digest_cursor = self::get(PROCESSED_TX_DIGEST_KEY.to_string());
-    let mut suix_query_events = format!("{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"suix_queryEvents\",\"params\":[{{\"MoveModule\":{{\"package\":\"{}\",\"module\": \"{}\"}},null,18000,false]}}",SUI_PACKAGE_ID, SUI_MODULE_ID);
+    let mut suix_query_events = format!("{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"suix_queryEvents\",\"params\":[{{\"MoveModule\":{{\"package\":\"{}\",\"module\": \"{}\"}},null,18000,false]}}",self::get(SUI_PACKAGE_ID_KEY.to_string()).unwrap(), self::get(SUI_MODULE_ID_KEY.to_string()).unwrap());
     let mut tx_digest_value = "";
 
     if tx_digest_cursor != None {
         tx_digest_value = tx_digest_cursor.as_ref().unwrap();
-        suix_query_events = format!("{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"suix_queryEvents\",\"params\":[{{\"MoveModule\":{{\"package\":\"{}\",\"module\": \"{}\"}}}},{{\"txDigest\":\"{}\", \"eventSeq\": \"0\"}},2,false]}}",SUI_PACKAGE_ID,SUI_MODULE_ID, tx_digest_value);
+        suix_query_events = format!("{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"suix_queryEvents\",\"params\":[{{\"MoveModule\":{{\"package\":\"{}\",\"module\": \"{}\"}}}},{{\"txDigest\":\"{}\", \"eventSeq\": \"0\"}},2,false]}}",self::get(SUI_PACKAGE_ID_KEY.to_string()).unwrap(), self::get(SUI_MODULE_ID_KEY.to_string()).unwrap(), tx_digest_value);
     }
-
+    let sui_rpc_url = get_sui_rpc_url();
     let request = CanisterHttpRequestArgument {
-        url: SUI_RPC_URL.to_string(),
+        url: sui_rpc_url,
         max_response_bytes: None,
         method: HttpMethod::POST,
         headers: vec![HttpHeader {
@@ -247,7 +274,8 @@ async fn mint() {
                 let amount: NumTokens = NumTokens::from_str(&parsed_json.value).unwrap();
 
                 let ledger_canister_id: Principal =
-                    Principal::from_text(LEDGER_CANISTER_ID).unwrap();
+                    Principal::from_text(self::get(LEDGER_CANISTER_ID_KEY.to_string()).unwrap())
+                        .unwrap();
 
                 let client = ICRC1Client {
                     runtime: CdkRuntime,
@@ -363,13 +391,13 @@ fn get_withdraw_request(
     let request_body: Option<Vec<u8>> = Some(json_utf8);
 
     let request = CanisterHttpRequestArgument {
-        url: TX_DIGEST_URL.to_string(),
+        url: self::get(constants::TX_DIGEST_URL_KEY.to_string()).unwrap(),
         max_response_bytes: None,
         method: HttpMethod::POST,
         headers: vec![
             HttpHeader {
                 name: "Host".to_string(),
-                value: SUFINITY_API_URL.to_string(),
+                value: self::get(constants::API_URL_KEY.to_string()).unwrap(),
             },
             HttpHeader {
                 name: "Content-Type".to_string(),
@@ -391,14 +419,10 @@ async fn get_public_key() -> Result<PublicKeyResponse, String> {
         derivation_path: vec![],
         key_id: EcdsaKeyIds::TestKeyLocalDevelopment.to_key_id(),
     };
-    let (res_public_key, error_public_key): (ECDSAPublicKeyReply, String) =
+    let (res_public_key,): (ECDSAPublicKeyReply,) =
         ic_cdk::call(mgmt_canister_id(), "ecdsa_public_key", (request,))
             .await
             .map_err(|e| format!("ecdsa_public_key failed {}", e.1))?;
-
-    if error_public_key.len() > 0 {
-        return Err(error_public_key);
-    }
 
     Ok(PublicKeyResponse {
         public_key: res_public_key.public_key.clone(),
@@ -433,9 +457,9 @@ async fn execute_tx_block_sui_rpc(signature: String, tx_bytes: String) -> Result
     };
 
     let request_json: String = format!("{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"sui_executeTransactionBlock\",\"params\": [\"{}\",[\"{}\"],null,null]}}", tx_bytes, signature).to_string();
-
+    let sui_rpc_url = get_sui_rpc_url();
     let request = CanisterHttpRequestArgument {
-        url: SUI_RPC_URL.to_string(),
+        url: sui_rpc_url,
         max_response_bytes: None,
         method: HttpMethod::POST,
         headers: vec![HttpHeader {
@@ -473,8 +497,23 @@ fn sha256(input: [u8; 32]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
+fn get_sui_rpc_url() -> String {
+    let is_local = self::get(constants::IS_LOCAL_KEY.to_string()).unwrap();
+
+    match is_local.as_str() {
+        "true" => SUI_TESTNET_RPC_URL.to_string(),
+        _ => SUI_MAINNET_RPC_URL.to_string(),
+    }
+}
+
 fn mgmt_canister_id() -> Principal {
-    return Principal::from_str(SUI_LOCAL_MGMT_PRINCIPAL_ID).unwrap();
+    let is_local = self::get(constants::IS_LOCAL_KEY.to_string()).unwrap();
+    let ledger_id = self::get(constants::LOCAL_MGMT_PRINCIPAL_ID_KEY.to_string()).unwrap();
+
+    match is_local.as_str() {
+        "true" => Principal::from_str(&ledger_id).unwrap(),
+        _ => Principal::management_canister(),
+    }
 }
 
 fn insert_event(key: String, value: Event) -> Option<Event> {
