@@ -182,4 +182,5 @@ pub struct InitArgs {
     pub sufinity_api_url: String,
     pub tx_digest_url: String,
     pub is_local: String,
+    pub minter_address_id: String,
 }

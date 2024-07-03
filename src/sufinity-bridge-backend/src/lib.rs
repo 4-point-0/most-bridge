@@ -6,13 +6,13 @@ use constants::{
     LEDGER_CANISTER_ID_KEY, PROCESSED_TX_DIGEST_KEY, QUERY_SUI_EVENTS_INTERVAL,
     SUI_MAINNET_RPC_URL, SUI_MODULE_ID_KEY, SUI_PACKAGE_ID_KEY, SUI_TESTNET_RPC_URL,
 };
-use event::{Event, KeyName, KeyValue, Memory};
+use helper::{KeyName, KeyValue, Memory};
 use ic_canister_log::log;
 use ic_cdk::api::management_canister::http_request::{
     http_request, CanisterHttpRequestArgument, HttpHeader, HttpMethod, HttpResponse, TransformArgs,
     TransformContext,
 };
-use ic_cdk::{query, update};
+use ic_cdk::{api, query, update};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::NumTokens;
 use icrc_ledger_types::icrc2::transfer_from::TransferFromArgs;
@@ -24,7 +24,7 @@ use serde_json::{self};
 use std::str::FromStr;
 mod common;
 mod constants;
-mod event;
+mod helper;
 mod logs;
 use crate::logs::INFO;
 use base64::{self, engine::general_purpose::STANDARD, Engine};
@@ -48,17 +48,21 @@ thread_local! {
         )
     );
 
-    static EVENTS: RefCell<StableBTreeMap<KeyName, Event, Memory>> = RefCell::new(
+    static FINALIZED_TRANSACTIONS: RefCell<StableBTreeMap<KeyName, KeyValue, Memory>> = RefCell::new(
         StableBTreeMap::init(
-            MEMORY_MANAGER.with(|m| m.borrow().get(MemoryId::new(0))),
+            MEMORY_MANAGER.with(|m| m.borrow().get(MemoryId::new(1))),
         )
     );
 
+    static MINTED_TRANSACTIONS: RefCell<StableBTreeMap<KeyName, KeyValue, Memory>> = RefCell::new(
+        StableBTreeMap::init(
+            MEMORY_MANAGER.with(|m| m.borrow().get(MemoryId::new(2))),
+        )
+    );
 }
 
 fn setup_timers() {
     ic_cdk_timers::set_timer_interval(QUERY_SUI_EVENTS_INTERVAL, || ic_cdk::spawn(self::mint()));
-    log!(INFO, "Timer set");
 }
 
 #[ic_cdk_macros::init]
@@ -72,6 +76,7 @@ fn init(args: InitArgs) {
         sufinity_api_url,
         tx_digest_url,
         is_local,
+        minter_address_id,
     } = args;
 
     if ledger_canister_id == ""
@@ -81,6 +86,7 @@ fn init(args: InitArgs) {
         || sufinity_api_url == ""
         || tx_digest_url == ""
         || is_local == ""
+        || minter_address_id == ""
     {
         log!(INFO, "Missing required arguments");
         return;
@@ -98,6 +104,10 @@ fn init(args: InitArgs) {
     self::insert(constants::API_URL_KEY.to_string(), sufinity_api_url);
     self::insert(constants::TX_DIGEST_URL_KEY.to_string(), tx_digest_url);
     self::insert(constants::IS_LOCAL_KEY.to_string(), is_local.to_string());
+    self::insert(
+        constants::MINTER_TOKEN_KEY.to_string(),
+        minter_address_id.to_string(),
+    );
 }
 
 #[update]
@@ -109,13 +119,18 @@ async fn public_key() -> Result<PublicKeyBS64, String> {
 
 #[update]
 async fn withdraw(args: TransferWithdrawArgs) -> Result<WithdrawResponse, String> {
+    let token_minter = self::get(constants::MINTER_TOKEN_KEY.to_string()).unwrap();
+
     let transfer_from_args = TransferFromArgs {
         from: Account::from(ic_cdk::caller()),
         memo: None,
         amount: Nat::from_str(&args.amount.clone()).unwrap(),
         spender_subaccount: None,
         fee: None,
-        to: args.to_account,
+        to: Account {
+            owner: Principal::from_text(token_minter).unwrap(),
+            subaccount: None,
+        },
         created_at_time: None,
     };
 
@@ -132,6 +147,8 @@ async fn withdraw(args: TransferWithdrawArgs) -> Result<WithdrawResponse, String
     if result.is_err() {
         return Err(result.unwrap_err());
     }
+
+    let block_index = result.unwrap().to_string();
 
     let public_key_response = get_public_key()
         .await
@@ -158,6 +175,25 @@ async fn withdraw(args: TransferWithdrawArgs) -> Result<WithdrawResponse, String
             let tx_digest = execute_tx_block_sui_rpc(signature.clone(), tx_bytes.clone())
                 .await
                 .map_err(|e| format!("execute_tx_block_sui_rpc error {}", e))?;
+            let is_local = self::get(constants::IS_LOCAL_KEY.to_string()).unwrap();
+            let tx: String = match is_local.as_str() {
+                "true" => format!(
+                    "https://suiscan.xyz/{:}/tx/{:}",
+                    "testnet",
+                    tx_digest.clone()
+                ),
+                _ => format!(
+                    "https://suiscan.xyz/{:}/tx/{:}",
+                    "mainnet",
+                    tx_digest.clone()
+                ),
+            };
+
+            self::insert_withdraw_tx(
+                block_index.clone(),
+                format!("{{\"block_index\": \"{:}\",\"date\":\"{:}\", \"amount\": \"{:}\",\"from\": \"{:}\", \"tx\": \"{:}\" }}"
+                ,block_index.clone(), api::time().to_string(), args.amount, ic_cdk::caller().to_string(), tx
+            ));
 
             return Ok(WithdrawResponse { tx_digest });
         }
@@ -227,7 +263,7 @@ async fn mint() {
     };
 
     let tx_digest_cursor = self::get(PROCESSED_TX_DIGEST_KEY.to_string());
-    let mut suix_query_events = format!("{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"suix_queryEvents\",\"params\":[{{\"MoveModule\":{{\"package\":\"{}\",\"module\": \"{}\"}},null,18000,false]}}",self::get(SUI_PACKAGE_ID_KEY.to_string()).unwrap(), self::get(SUI_MODULE_ID_KEY.to_string()).unwrap());
+    let mut suix_query_events = format!("{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"suix_queryEvents\",\"params\":[{{\"MoveModule\":{{\"package\":\"{}\",\"module\": \"{}\"}}}},null,18000,false]}}",self::get(SUI_PACKAGE_ID_KEY.to_string()).unwrap(), self::get(SUI_MODULE_ID_KEY.to_string()).unwrap());
     let mut tx_digest_value = "";
 
     if tx_digest_cursor != None {
@@ -254,11 +290,6 @@ async fn mint() {
         Ok((response,)) => {
             let trasnaction = serde_json::from_slice::<Receipt>(&response.body)
                 .map_err(|e| format!("Error: {}", e.to_string()));
-
-            if trasnaction.is_err() {
-                log!(INFO, "{}", trasnaction.unwrap_err());
-                return;
-            }
 
             let events = &trasnaction.clone().unwrap().result.data;
 
@@ -315,17 +346,11 @@ async fn mint() {
                             trasnaction.clone().unwrap().result.next_cursor.tx_digest,
                         );
 
-                        self::insert_event(
-                            event.id.tx_digest.to_string(),
-                            Event {
-                                timestamp: ic_cdk::api::time(),
-                                tx_digest: event.id.tx_digest.to_string(),
-                                from: parsed_json.from.to_string(),
-                                minter_address: parsed_json.minter_address.to_string(),
-                                principal_address: parsed_json.principal_address.to_string(),
-                                value: parsed_json.value.to_string(),
-                            },
-                        );
+                        self::insert_mint_tx(
+                            block_index.clone().to_string(),
+                            format!("{{\"block_index\": \"{:}\",\"date\":\"{:}\", \"amount\": \"{:}\",\"from\": \"{:}\", \"to\": \"{:}\" }}"
+                            ,block_index.clone(), api::time().to_string(), &parsed_json.value, ic_cdk::caller().to_string(), &parsed_json.principal_address
+                        ));
                         block_index.to_string()
                     }
                     Ok(Err(err)) => err.to_string(),
@@ -475,11 +500,20 @@ async fn execute_tx_block_sui_rpc(signature: String, tx_bytes: String) -> Result
 
     match http_request(request, 25_000_000_000).await {
         Ok((response,)) => {
+            let str_body = String::from_utf8(response.body.clone())
+                .expect("Transformed response is not UTF-8 encoded.");
+            ic_cdk::api::print(format!("{:?}", str_body));
             let resp = serde_json::from_slice::<ExecuteTxBlockResponse>(&response.body)
-                .map_err(|e| format!("Error: {}", e.to_string()))
-                .unwrap();
-            return Ok(resp.result.digest);
+                .map_err(|e| format!("Error: {}", e.to_string()));
+
+            if resp.is_err() {
+                log!(INFO, "{:?}", resp.err());
+                return Err("Failed to get tx digest".to_string());
+            }
+
+            return Ok(resp.unwrap().result.digest);
         }
+
         Err((r, m)) => {
             log!(
                 INFO,
@@ -516,10 +550,6 @@ fn mgmt_canister_id() -> Principal {
     }
 }
 
-fn insert_event(key: String, value: Event) -> Option<Event> {
-    EVENTS.with(|p| p.borrow_mut().insert(KeyName(key), value))
-}
-
 fn get(key: String) -> Option<String> {
     MAP.with(|p| p.borrow().get(&KeyName(key)).map(|v| v.0))
 }
@@ -527,4 +557,40 @@ fn get(key: String) -> Option<String> {
 fn insert(key: String, value: String) -> Option<String> {
     MAP.with(|p| p.borrow_mut().insert(KeyName(key), KeyValue(value)))
         .map(|v| v.0)
+}
+
+fn insert_mint_tx(key: String, value: String) -> Option<String> {
+    MINTED_TRANSACTIONS
+        .with(|p| p.borrow_mut().insert(KeyName(key), KeyValue(value)))
+        .map(|v| v.0)
+}
+
+fn insert_withdraw_tx(key: String, value: String) -> Option<String> {
+    FINALIZED_TRANSACTIONS
+        .with(|p| p.borrow_mut().insert(KeyName(key), KeyValue(value)))
+        .map(|v| v.0)
+}
+
+#[query]
+fn get_minted_transactions() -> Vec<KeyValue> {
+    MINTED_TRANSACTIONS.with(|transactions| {
+        return transactions
+            .borrow()
+            .iter()
+            .into_iter()
+            .map(|(_, value)| value)
+            .collect();
+    })
+}
+
+#[query]
+fn get_finalized_transactions() -> Vec<KeyValue> {
+    FINALIZED_TRANSACTIONS.with(|transactions| {
+        return transactions
+            .borrow()
+            .iter()
+            .into_iter()
+            .map(|(_, value)| value)
+            .collect();
+    })
 }

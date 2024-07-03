@@ -11,3 +11,4 @@ pub const SUI_MODULE_ID_KEY: &str = "sui_module_id_key";
 pub const API_URL_KEY: &str = "api_url_key";
 pub const TX_DIGEST_URL_KEY: &str = "tx_digest_url_key";
 pub const IS_LOCAL_KEY: &str = "is_local_key";
+pub const MINTER_TOKEN_KEY: &str = "minter_token_local_key";

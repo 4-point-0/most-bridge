@@ -86,7 +86,15 @@ dfx deploy icrc1_index_canister --argument '(opt variant{Init = record { ledger_
 # Step 8: Deploy minter:
 
 ```bash
-dfx deploy
+dfx deploy minter --argument "( record {
+  ledger_canister_id = \"${LEDGER_ID}\";
+  local_mgmt_principal_id = \"${MANAGEMENT_CANISTER_ID}\";
+  sui_package_id = \"${PACKAGE_ID}\";
+  sui_module_id = \"${MODULE_ID}\";
+  sufinity_api_url = \"${API_URL}\";
+  tx_digest_url = \"${DIGEST_API_URL}\";
+  is_local = \"${IS_LOCAL}\";
+  })"
 ```
 
 # Step 9: Transfer funds to canister
@@ -102,7 +110,7 @@ dfx canister call icrc1_ledger_canister icrc1_transfer "(record {
 
 # Withdraw functionality
 
-# 1 Step: Approve trasnfer
+# 1 Step: Approve transfer
 
 ```bash
 dfx canister call --identity ${PRINCIPAL_NAME} icrc1_ledger_canister icrc2_approve "(

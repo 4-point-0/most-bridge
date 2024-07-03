@@ -1,4 +1,4 @@
-use ic_canister_log::{declare_log_buffer, GlobalBuffer, Sink};  
+use ic_canister_log::{declare_log_buffer, GlobalBuffer, Sink};
 // export as export_logs
 use serde::Deserialize;
 use std::str::FromStr;
@@ -77,70 +77,3 @@ pub struct LogEntry {
 pub struct Log {
     pub entries: Vec<LogEntry>,
 }
-
-impl Log {
-    // pub fn push_logs(&mut self, priority: Priority) {
-    //     let logs = match priority {
-    //         Priority::Info => export_logs(&INFO_BUF),
-    //         Priority::TraceHttp => export_logs(&TRACE_HTTP_BUF),
-    //         Priority::Debug => export_logs(&DEBUG_BUF),
-    //     };
-    //     for entry in logs {
-    //         self.entries.push(LogEntry {
-    //             timestamp: entry.timestamp,
-    //             counter: entry.counter,
-    //             priority,
-    //             file: entry.file.to_string(),
-    //             line: entry.line,
-    //             message: entry.message,
-    //         });
-    //     }
-    // }
-
-    // pub fn push_all(&mut self) {
-    //     self.push_logs(Priority::Info);
-    //     self.push_logs(Priority::TraceHttp);
-    //     self.push_logs(Priority::Debug);
-    // }
-
-    // pub fn serialize_logs(&self, max_body_size: usize) -> String {
-    //     let mut entries_json: String = serde_json::to_string(&self).unwrap_or_default();
-
-    //     if entries_json.len() > max_body_size {
-    //         let mut left = 0;
-    //         let mut right = self.entries.len();
-
-    //         while left < right {
-    //             let mid = left + (right - left) / 2;
-    //             let mut temp_log = self.clone();
-    //             temp_log.entries.truncate(mid);
-    //             let temp_entries_json = serde_json::to_string(&temp_log).unwrap_or_default();
-
-    //             if temp_entries_json.len() <= max_body_size {
-    //                 entries_json = temp_entries_json;
-    //                 left = mid + 1;
-    //             } else {
-    //                 right = mid;
-    //             }
-    //         }
-    //     }
-    //     entries_json
-    // }
-
-    // pub fn sort_logs(&mut self, sort_order: Sort) {
-    //     match sort_order {
-    //         Sort::Ascending => self.sort_asc(),
-    //         Sort::Descending => self.sort_desc(),
-    //     }
-    // }
-
-    // pub fn sort_asc(&mut self) {
-    //     self.entries.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-    // }
-
-    // pub fn sort_desc(&mut self) {
-    //     self.entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-    // }
-}
-
-
