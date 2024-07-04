@@ -17,8 +17,8 @@ use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::NumTokens;
 use icrc_ledger_types::icrc2::transfer_from::TransferFromArgs;
 use models::{
-    ExecuteTxBlockResponse, InitArgs, PublicKeyBS64, PublicKeyResponse, TransferWithdrawArgs,
-    TxDigestRequest,
+    ExecuteTxBlockResponse, InitArgs, PublicKeyBS64, PublicKeyResponse, ResponseSizeEstimate,
+    TransferWithdrawArgs, TxDigestRequest,
 };
 use serde_json::{self};
 use std::str::FromStr;
@@ -161,7 +161,8 @@ async fn withdraw(args: TransferWithdrawArgs) -> Result<WithdrawResponse, String
     let public_key = public_key_response.unwrap().public_key;
 
     let request = get_withdraw_request(public_key.clone(), args.recipient, args.amount.clone());
-    match http_request(request, 25_000_000_000).await {
+    let cycles = get_req_cycles();
+    match http_request(request, cycles).await {
         Ok((response,)) => {
             let result = serde_json::from_slice::<TxDigestResponse>(&response.body);
 
@@ -270,10 +271,13 @@ async fn mint() {
         tx_digest_value = tx_digest_cursor.as_ref().unwrap();
         suix_query_events = format!("{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"suix_queryEvents\",\"params\":[{{\"MoveModule\":{{\"package\":\"{}\",\"module\": \"{}\"}}}},{{\"txDigest\":\"{}\", \"eventSeq\": \"0\"}},2,false]}}",self::get(SUI_PACKAGE_ID_KEY.to_string()).unwrap(), self::get(SUI_MODULE_ID_KEY.to_string()).unwrap(), tx_digest_value);
     }
+
+    let effective_size_estimate = get_effective_size_estimate();
+    let cycles = get_req_cycles();
     let sui_rpc_url = get_sui_rpc_url();
     let request = CanisterHttpRequestArgument {
         url: sui_rpc_url,
-        max_response_bytes: None,
+        max_response_bytes: Some(effective_size_estimate),
         method: HttpMethod::POST,
         headers: vec![HttpHeader {
             name: "Content-Type".to_string(),
@@ -286,7 +290,7 @@ async fn mint() {
         )),
     };
 
-    match http_request(request, 25_000_000_000).await {
+    match http_request(request, cycles).await {
         Ok((response,)) => {
             let trasnaction = serde_json::from_slice::<Receipt>(&response.body)
                 .map_err(|e| format!("Error: {}", e.to_string()));
@@ -414,10 +418,10 @@ fn get_withdraw_request(
     };
     let json_utf8: Vec<u8> = json_string.into_bytes();
     let request_body: Option<Vec<u8>> = Some(json_utf8);
-
+    let effective_size_estimate = get_effective_size_estimate();
     let request = CanisterHttpRequestArgument {
         url: self::get(constants::TX_DIGEST_URL_KEY.to_string()).unwrap(),
-        max_response_bytes: None,
+        max_response_bytes: Some(effective_size_estimate),
         method: HttpMethod::POST,
         headers: vec![
             HttpHeader {
@@ -462,11 +466,12 @@ async fn sign_with_ecdsa(digest: [u8; 32]) -> Vec<u8> {
         key_id: EcdsaKeyIds::TestKeyLocalDevelopment.to_key_id(),
     };
 
-    let (response,): (SignWithECDSAReply,) = ic_cdk::api::call::call_with_payment(
+    let cycles = get_req_cycles();
+    let (response,): (SignWithECDSAReply,) = ic_cdk::api::call::call_with_payment128(
         mgmt_canister_id(),
         "sign_with_ecdsa",
         (request,),
-        25_000_000_000,
+        cycles,
     )
     .await
     .map_err(|e| format!("sign_with_ecdsa failed {}", e.1))
@@ -483,9 +488,11 @@ async fn execute_tx_block_sui_rpc(signature: String, tx_bytes: String) -> Result
 
     let request_json: String = format!("{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"sui_executeTransactionBlock\",\"params\": [\"{}\",[\"{}\"],null,null]}}", tx_bytes, signature).to_string();
     let sui_rpc_url = get_sui_rpc_url();
+    let effective_size_estimate = get_effective_size_estimate();
+    let cycles = get_req_cycles();
     let request = CanisterHttpRequestArgument {
         url: sui_rpc_url,
-        max_response_bytes: None,
+        max_response_bytes: Some(effective_size_estimate),
         method: HttpMethod::POST,
         headers: vec![HttpHeader {
             name: "Content-Type".to_string(),
@@ -498,7 +505,7 @@ async fn execute_tx_block_sui_rpc(signature: String, tx_bytes: String) -> Result
         )),
     };
 
-    match http_request(request, 25_000_000_000).await {
+    match http_request(request, cycles).await {
         Ok((response,)) => {
             let str_body = String::from_utf8(response.body.clone())
                 .expect("Transformed response is not UTF-8 encoded.");
@@ -522,6 +529,25 @@ async fn execute_tx_block_sui_rpc(signature: String, tx_bytes: String) -> Result
             return Err(m.to_string());
         }
     };
+}
+
+fn get_effective_size_estimate() -> u64 {
+    let response_size_estimate = ResponseSizeEstimate::new(256);
+    const HEADER_SIZE_LIMIT: u64 = 2 * 1024;
+    let effective_size_estimate = response_size_estimate.get() + HEADER_SIZE_LIMIT;
+    return effective_size_estimate;
+}
+
+fn get_req_cycles() -> u128 {
+    let effective_size_estimate = get_effective_size_estimate();
+    // Details of the values used in the following lines can be found here:
+    // https://internetcomputer.org/docs/current/developer-docs/production/computation-and-storage-costs
+    let base_cycles = 400_000_000u128 + 100_000u128 * (2 * effective_size_estimate as u128);
+
+    const BASE_SUBNET_SIZE: u128 = 13;
+    const SUBNET_SIZE: u128 = 34;
+    let cycles = base_cycles * SUBNET_SIZE / BASE_SUBNET_SIZE;
+    return cycles;
 }
 
 fn sha256(input: [u8; 32]) -> [u8; 32] {

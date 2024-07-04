@@ -1,4 +1,4 @@
-# SUFINITY BRIDGE BACKEND
+# MOST BRIDGE BACKEND
 
 # Setting up ledger and minter locally
 

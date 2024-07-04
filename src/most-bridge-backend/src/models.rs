@@ -1,7 +1,9 @@
 use candid::CandidType;
-use icrc_ledger_types::icrc1::account::Account;
 use serde_derive::Deserialize;
 use serde_derive::Serialize;
+use std::fmt;
+
+use crate::constants::MAX_PAYLOAD_SIZE;
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -169,7 +171,6 @@ pub struct PublicKeyBS64 {
 #[derive(CandidType, Deserialize, Serialize)]
 pub struct TransferWithdrawArgs {
     pub amount: String,
-    pub to_account: Account,
     pub recipient: String,
 }
 
@@ -183,4 +184,32 @@ pub struct InitArgs {
     pub tx_digest_url: String,
     pub is_local: String,
     pub minter_address_id: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ResponseSizeEstimate(u64);
+
+impl ResponseSizeEstimate {
+    pub fn new(num_bytes: u64) -> Self {
+        assert!(num_bytes > 0);
+        assert!(num_bytes <= MAX_PAYLOAD_SIZE);
+        Self(num_bytes)
+    }
+
+    /// Describes the expected (90th percentile) number of bytes in the HTTP response body.
+    /// This number should be less than `MAX_PAYLOAD_SIZE`.
+    pub fn get(self) -> u64 {
+        self.0
+    }
+
+    /// Returns a higher estimate for the payload size.
+    pub fn adjust(self) -> Self {
+        Self(self.0.max(1024).saturating_mul(2).min(MAX_PAYLOAD_SIZE))
+    }
+}
+
+impl fmt::Display for ResponseSizeEstimate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
