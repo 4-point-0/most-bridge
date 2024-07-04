@@ -1,7 +1,7 @@
 {
   "canisters": {
     "minter": {
-      "candid": "src/sufinity-bridge-backend/cksui_minter.did",
+      "candid": "src/most-bridge-backend/cksui_minter.did",
       "package": "minter",
       "type": "rust"
     },
