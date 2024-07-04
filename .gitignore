@@ -30,4 +30,4 @@ dist/
 cert/*
 
 
-src/sufinity-bridge-api/config.toml
+config.toml
