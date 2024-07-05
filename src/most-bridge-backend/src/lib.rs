@@ -65,6 +65,11 @@ fn setup_timers() {
     ic_cdk_timers::set_timer_interval(QUERY_SUI_EVENTS_INTERVAL, || ic_cdk::spawn(self::mint()));
 }
 
+#[ic_cdk_macros::post_upgrade]
+fn post_upgrade() {
+    setup_timers();
+}
+
 #[ic_cdk_macros::init]
 fn init(args: InitArgs) {
     setup_timers();
@@ -105,7 +110,7 @@ fn init(args: InitArgs) {
     self::insert(constants::TX_DIGEST_URL_KEY.to_string(), tx_digest_url);
     self::insert(constants::IS_LOCAL_KEY.to_string(), is_local.to_string());
     self::insert(
-        constants::MINTER_TOKEN_KEY.to_string(),
+        constants::MINTER_ADDRESS_KEY.to_string(),
         minter_address_id.to_string(),
     );
 }
@@ -119,7 +124,7 @@ async fn public_key() -> Result<PublicKeyBS64, String> {
 
 #[update]
 async fn withdraw(args: TransferWithdrawArgs) -> Result<WithdrawResponse, String> {
-    let token_minter = self::get(constants::MINTER_TOKEN_KEY.to_string()).unwrap();
+    let token_minter = self::get(constants::MINTER_ADDRESS_KEY.to_string()).unwrap();
 
     let transfer_from_args = TransferFromArgs {
         from: Account::from(ic_cdk::caller()),
@@ -443,10 +448,14 @@ fn get_withdraw_request(
 }
 
 async fn get_public_key() -> Result<PublicKeyResponse, String> {
+    let is_local = self::get(constants::IS_LOCAL_KEY.to_string()).unwrap();
     let request = ECDSAPublicKey {
         canister_id: None,
         derivation_path: vec![],
-        key_id: EcdsaKeyIds::TestKeyLocalDevelopment.to_key_id(),
+        key_id: match is_local.as_str() {
+            "true" => EcdsaKeyIds::TestKeyLocalDevelopment.to_key_id(),
+            _ => EcdsaKeyIds::ProductionKey1.to_key_id(),
+        },
     };
     let (res_public_key,): (ECDSAPublicKeyReply,) =
         ic_cdk::call(mgmt_canister_id(), "ecdsa_public_key", (request,))
@@ -460,10 +469,14 @@ async fn get_public_key() -> Result<PublicKeyResponse, String> {
 }
 
 async fn sign_with_ecdsa(digest: [u8; 32]) -> Vec<u8> {
+    let is_local = self::get(constants::IS_LOCAL_KEY.to_string()).unwrap();
     let request = SignWithECDSA {
         message_hash: sha256(digest).to_vec(),
         derivation_path: vec![],
-        key_id: EcdsaKeyIds::TestKeyLocalDevelopment.to_key_id(),
+        key_id: match is_local.as_str() {
+            "true" => EcdsaKeyIds::TestKeyLocalDevelopment.to_key_id(),
+            _ => EcdsaKeyIds::ProductionKey1.to_key_id(),
+        },
     };
 
     let cycles = get_req_cycles();

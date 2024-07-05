@@ -1,4 +1,4 @@
-module suifinity::ckSuiHelper{
+module most::ckSuiHelper{
     use sui::coin::{Self, Coin};
     use sui::event::emit;
     use sui::sui::SUI;

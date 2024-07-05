@@ -56,34 +56,41 @@ dfx identity use default
 export DEFAULT=$(dfx identity get-principal)
 ```
 
-# Step 6: Deploy icrc1_ledger_canister:
+# Step 6: Archive cycle
+
+```bash
+export CYCLE_FOR_ARCHIVE_CREATION=10000000000000
+```
+
+# Step 7: Deploy icrc1_ledger_canister:
 
 ```bash
 dfx deploy icrc1_ledger_canister --argument "(variant { Init =
 record {
      token_symbol = \"CKSUI\";
-     token_name = \"L-CKSUI\";
+     token_name = \"CKSUI\";
      decimals = opt 9;
      minting_account = record { owner = principal \"${MINTER}\" };
      transfer_fee = 10_000;
      metadata = vec {};
-     initial_balances = vec { record { record { owner = principal \"${DEFAULT}\"; }; 10_000_000_000; }; };
+     initial_balances = vec { record { record { owner = principal \"${DEFAULT}\"; }; 100_000_000_000_000_000; }; };
      archive_options = record {
          num_blocks_to_archive = 1000;
          trigger_threshold = 2000;
-         controller_id = principal \"${MINTER}\";
+         controller_id = principal \"${DEFAULT}\";
+         cycles_for_archive_creation = opt ${CYCLE_FOR_ARCHIVE_CREATION};
      };
  }
 })"
 ```
 
-# Step 7: Deploy ircr1_ledger_indexer:
+# Step 8: Deploy ircr1_ledger_indexer:
 
 ```bash
 dfx deploy icrc1_index_canister --argument '(opt variant{Init = record { ledger_id = principal "mxzaz-hqaaa-aaaar-qaada-cai" }})'
 ```
 
-# Step 8: Deploy minter:
+# Step 9: Deploy minter:
 
 ```bash
 dfx deploy minter --argument "( record {
@@ -97,7 +104,7 @@ dfx deploy minter --argument "( record {
   })"
 ```
 
-# Step 9: Transfer funds to canister
+# Step 10: Transfer funds to canister
 
 ```bash
 dfx canister call icrc1_ledger_canister icrc1_transfer "(record {
