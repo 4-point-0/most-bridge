@@ -1,5 +1,5 @@
 [workspace]
 members = [
-    "src/most-bridge-backend","src/most-bridge-api"
+    "src/most-bridge-backend"
 ]
 resolver = "2"
