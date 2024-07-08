@@ -117,7 +117,6 @@ pub struct MergeCoinsRequest {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TxDigestRequest {
-    pub public_key: String,
     pub recipient: String,
     pub amount: String,
 }

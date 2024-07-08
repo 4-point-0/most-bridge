@@ -165,7 +165,7 @@ async fn withdraw(args: TransferWithdrawArgs) -> Result<WithdrawResponse, String
 
     let public_key = public_key_response.unwrap().public_key;
 
-    let request = get_withdraw_request(public_key.clone(), args.recipient, args.amount.clone());
+    let request = get_withdraw_request(args.recipient, args.amount.clone());
     let cycles = get_req_cycles();
     match http_request(request, cycles).await {
         Ok((response,)) => {
@@ -402,21 +402,12 @@ async fn encode_signature(digest: String, public_key: Vec<u8>) -> String {
     return signature_encoded;
 }
 
-fn get_withdraw_request(
-    public_key: Vec<u8>,
-    recipient: String,
-    amount: String,
-) -> CanisterHttpRequestArgument {
+fn get_withdraw_request(recipient: String, amount: String) -> CanisterHttpRequestArgument {
     let context = Context {
         bucket_start_time_index: 0,
         closing_price_index: 4,
     };
-    let pub_key = Engine::encode(&STANDARD, &public_key);
-    let model = TxDigestRequest {
-        public_key: pub_key.clone(),
-        recipient,
-        amount,
-    };
+    let model = TxDigestRequest { recipient, amount };
     let json_string: String = match serde_json::to_string(&model) {
         Ok(resp) => resp,
         Err(err) => panic!("Failed to serialize: {}", err.to_string()),
