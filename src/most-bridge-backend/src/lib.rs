@@ -93,7 +93,7 @@ fn init(args: InitArgs) {
         || is_local == ""
         || minter_address_id == ""
     {
-        log!(INFO, "Missing required arguments");
+        log!(INFO, "Missing required arguments on init");
         return;
     }
     self::insert(
