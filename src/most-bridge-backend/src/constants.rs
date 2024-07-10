@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-pub const QUERY_SUI_EVENTS_INTERVAL: Duration = Duration::from_secs(10);
+pub const QUERY_SUI_EVENTS_INTERVAL: Duration = Duration::from_secs(3 * 60);
 pub const SUI_TESTNET_RPC_URL: &str = "https://fullnode.testnet.sui.io:443";
 pub const SUI_MAINNET_RPC_URL: &str = "https://fullnode.mainnet.sui.io:443";
 pub const PROCESSED_TX_DIGEST_KEY: &str = "txDigest";
