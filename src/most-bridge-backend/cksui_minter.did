@@ -2,7 +2,7 @@
 
 type Account = record { owner : principal; subaccount : opt blob };
 type TransferArgsWithdraw = record { amount : text; recipient: text; };
-type InitArgs = record { ledger_canister_id : text; local_mgmt_principal_id: text; sui_package_id: text; sui_module_id: text; sufinity_api_url: text; tx_digest_url: text; is_local: text; minter_address_id: text;};
+type InitArgs = record { ledger_canister_id : text; local_mgmt_principal_id: text;  api_url: text; tx_digest_url: text; is_local: text; minter_address_id: text; query_events_url: text; execute_tx_block_url: text;};
 
 
 

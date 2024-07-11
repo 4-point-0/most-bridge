@@ -65,7 +65,7 @@ export CYCLE_FOR_ARCHIVE_CREATION=10000000000000
 # Step 7: Deploy icrc1_ledger_canister:
 
 ```bash
-dfx deploy icrc1_ledger_canister --argument "(variant { Init =
+dfx deploy ck_sui_ledger_canister --argument "(variant { Init =
 record {
      token_symbol = \"CKSUI\";
      token_name = \"CKSUI\";
@@ -94,13 +94,14 @@ dfx deploy icrc1_index_canister --argument '(opt variant{Init = record { ledger_
 
 ```bash
 dfx deploy minter --argument "( record {
-  ledger_canister_id = \"${LEDGER_ID}\";
-  local_mgmt_principal_id = \"${MANAGEMENT_CANISTER_ID}\";
-  sui_package_id = \"${PACKAGE_ID}\";
-  sui_module_id = \"${MODULE_ID}\";
-  sufinity_api_url = \"${API_URL}\";
-  tx_digest_url = \"${DIGEST_API_URL}\";
+  ledger_canister_id = \"${LEDGER_CANISTER_ID}\";
+  local_mgmt_principal_id = \"${LOCAL_MGMT_PRINCIPAL_ID}\";
+  sui_package_id = \"${SUI_PACKAGE_ID}\";
+  sui_module_id = \"${SUI_MODULE_ID}\";
+  sufinity_api_url = \"${SUFINITY_API_URL}\";
+  tx_digest_url = \"${TX_DIGEST__URL}\";
   is_local = \"${IS_LOCAL}\";
+  minter_address_id = \"${MINTER_ADDRESS_ID}\";
   })"
 ```
 
@@ -111,7 +112,7 @@ dfx canister call icrc1_ledger_canister icrc1_transfer "(record {
   to = record {
     owner = principal \"$(dfx canister id minter)\";
   };
-  amount = 1_000_000_000;
+  amount = 50_000_000_000_000_000;
 })"
 ```
 
@@ -120,7 +121,7 @@ dfx canister call icrc1_ledger_canister icrc1_transfer "(record {
 # 1 Step: Approve transfer
 
 ```bash
-dfx canister call --identity ${PRINCIPAL_NAME} icrc1_ledger_canister icrc2_approve "(
+dfx canister call --identity ${PRINCIPAL_NAME} ck_sui_ledger_canister icrc2_approve "(
   record {
     spender= record {
       owner = principal \"$(dfx canister id minter)\";
@@ -138,9 +139,6 @@ dfx canister call --identity ${PRINCIPAL_NAME} icrc1_ledger_canister icrc2_appro
 ```bash
  dfx canister call minter withdraw "(record {
   amount = \"${AMOUNT}\";
-  to_account = record {
-    owner = principal \"$(dfx canister id icrc1_ledger_canister)\";
-  };
   recipient = \"${RECIPIENT_SUI _ADDRESS}\"
 })"
 ```
