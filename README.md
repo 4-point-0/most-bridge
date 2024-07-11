@@ -1,8 +1,7 @@
 # MOST BRIDGE
 
-This project consists of 4 repos:
+This project consists of 3 repos:
 
-- `most-bridge-api` - api that provides data for querying SUI_RPC
 - `most-bridge-backend` - canister for minting and withdrawing ckSUI tokens
 - `most-bridge-helper` - generating sui address from base64 public key
 - `most-ck-sui-helper` - sui smart contract for depositing SUI tokens to minter
