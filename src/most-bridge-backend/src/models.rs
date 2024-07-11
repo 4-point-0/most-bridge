@@ -153,7 +153,6 @@ pub struct ExecuteTxBlockResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ExecuteTxBlockResponseResult {
     pub digest: String,
-    pub confirmed_local_execution: bool,
 }
 
 #[derive(Serialize, Debug)]
@@ -177,12 +176,12 @@ pub struct TransferWithdrawArgs {
 pub struct InitArgs {
     pub ledger_canister_id: String,
     pub local_mgmt_principal_id: String,
-    pub sui_package_id: String,
-    pub sui_module_id: String,
-    pub sufinity_api_url: String,
+    pub api_url: String,
     pub tx_digest_url: String,
     pub is_local: String,
     pub minter_address_id: String,
+    pub query_events_url: String,
+    pub execute_tx_block_url: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

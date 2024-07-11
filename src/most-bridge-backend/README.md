@@ -121,7 +121,7 @@ dfx canister call icrc1_ledger_canister icrc1_transfer "(record {
 # 1 Step: Approve transfer
 
 ```bash
-dfx canister call --identity ${PRINCIPAL_NAME} icrc1_ledger_canister icrc2_approve "(
+dfx canister call --identity ${PRINCIPAL_NAME} ck_sui_ledger_canister icrc2_approve "(
   record {
     spender= record {
       owner = principal \"$(dfx canister id minter)\";

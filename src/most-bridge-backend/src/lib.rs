@@ -3,8 +3,9 @@ use common::{
     TxDigestResponse, WithdrawResponse,
 };
 use constants::{
-    LEDGER_CANISTER_ID_KEY, PROCESSED_TX_DIGEST_KEY, QUERY_SUI_EVENTS_INTERVAL,
-    SUI_MAINNET_RPC_URL, SUI_MODULE_ID_KEY, SUI_PACKAGE_ID_KEY, SUI_TESTNET_RPC_URL,
+    API_URL_KEY, EXECUTE_TX_BLOCK_URL_KEY, IS_LOCAL_KEY, LEDGER_CANISTER_ID_KEY,
+    LOCAL_MGMT_PRINCIPAL_ID_KEY, MINTER_ADDRESS_KEY, PROCESSED_TX_DIGEST_KEY, QUERY_EVENTS_URL_KEY,
+    QUERY_SUI_EVENTS_INTERVAL, TX_DIGEST_URL_KEY,
 };
 use helper::{KeyName, KeyValue, Memory};
 use ic_canister_log::log;
@@ -18,7 +19,7 @@ use icrc_ledger_types::icrc1::transfer::NumTokens;
 use icrc_ledger_types::icrc2::transfer_from::TransferFromArgs;
 use models::{
     ExecuteTxBlockResponse, InitArgs, PublicKeyBS64, PublicKeyResponse, ResponseSizeEstimate,
-    TransferWithdrawArgs, TxDigestRequest,
+    TransferWithdrawArgs,
 };
 use serde_json::{self};
 use std::str::FromStr;
@@ -66,53 +67,55 @@ fn setup_timers() {
 }
 
 #[ic_cdk_macros::post_upgrade]
-fn post_upgrade() {
+fn post_upgrade(args: InitArgs) {
     setup_timers();
+    populate_memory(args);
 }
 
 #[ic_cdk_macros::init]
 fn init(args: InitArgs) {
     setup_timers();
+    populate_memory(args);
+}
+
+fn populate_memory(args: InitArgs) {
     let InitArgs {
         ledger_canister_id,
         local_mgmt_principal_id,
-        sui_package_id,
-        sui_module_id,
-        sufinity_api_url,
+        api_url,
         tx_digest_url,
         is_local,
         minter_address_id,
+        query_events_url,
+        execute_tx_block_url,
     } = args;
 
     if ledger_canister_id == ""
         || local_mgmt_principal_id == ""
-        || sui_package_id == ""
-        || sui_module_id == ""
-        || sufinity_api_url == ""
+        || api_url == ""
         || tx_digest_url == ""
         || is_local == ""
         || minter_address_id == ""
+        || query_events_url == ""
+        || execute_tx_block_url == ""
     {
-        log!(INFO, "Missing required arguments on init");
+        log!(INFO, "Missing required arguments");
         return;
     }
+    self::insert(LEDGER_CANISTER_ID_KEY.to_string(), ledger_canister_id);
     self::insert(
-        constants::LEDGER_CANISTER_ID_KEY.to_string(),
-        ledger_canister_id,
-    );
-    self::insert(
-        constants::LOCAL_MGMT_PRINCIPAL_ID_KEY.to_string(),
+        LOCAL_MGMT_PRINCIPAL_ID_KEY.to_string(),
         local_mgmt_principal_id,
     );
-    self::insert(constants::SUI_PACKAGE_ID_KEY.to_string(), sui_package_id);
-    self::insert(constants::SUI_MODULE_ID_KEY.to_string(), sui_module_id);
-    self::insert(constants::API_URL_KEY.to_string(), sufinity_api_url);
-    self::insert(constants::TX_DIGEST_URL_KEY.to_string(), tx_digest_url);
-    self::insert(constants::IS_LOCAL_KEY.to_string(), is_local.to_string());
+    self::insert(API_URL_KEY.to_string(), api_url);
+    self::insert(TX_DIGEST_URL_KEY.to_string(), tx_digest_url);
+    self::insert(IS_LOCAL_KEY.to_string(), is_local.to_string());
     self::insert(
-        constants::MINTER_ADDRESS_KEY.to_string(),
+        MINTER_ADDRESS_KEY.to_string(),
         minter_address_id.to_string(),
     );
+    self::insert(QUERY_EVENTS_URL_KEY.to_string(), query_events_url);
+    self::insert(EXECUTE_TX_BLOCK_URL_KEY.to_string(), execute_tx_block_url);
 }
 
 #[update]
@@ -124,7 +127,7 @@ async fn public_key() -> Result<PublicKeyBS64, String> {
 
 #[update]
 async fn withdraw(args: TransferWithdrawArgs) -> Result<WithdrawResponse, String> {
-    let token_minter = self::get(constants::MINTER_ADDRESS_KEY.to_string()).unwrap();
+    let token_minter = self::get(MINTER_ADDRESS_KEY.to_string()).unwrap();
 
     let transfer_from_args = TransferFromArgs {
         from: Account::from(ic_cdk::caller()),
@@ -166,6 +169,7 @@ async fn withdraw(args: TransferWithdrawArgs) -> Result<WithdrawResponse, String
     let public_key = public_key_response.unwrap().public_key;
 
     let request = get_withdraw_request(args.recipient, args.amount.clone());
+
     let cycles = get_req_cycles();
     match http_request(request, cycles).await {
         Ok((response,)) => {
@@ -181,7 +185,7 @@ async fn withdraw(args: TransferWithdrawArgs) -> Result<WithdrawResponse, String
             let tx_digest = execute_tx_block_sui_rpc(signature.clone(), tx_bytes.clone())
                 .await
                 .map_err(|e| format!("execute_tx_block_sui_rpc error {}", e))?;
-            let is_local = self::get(constants::IS_LOCAL_KEY.to_string()).unwrap();
+            let is_local = self::get(IS_LOCAL_KEY.to_string()).unwrap();
             let tx: String = match is_local.as_str() {
                 "true" => format!(
                     "https://suiscan.xyz/{:}/tx/{:}",
@@ -269,26 +273,26 @@ async fn mint() {
     };
 
     let tx_digest_cursor = self::get(PROCESSED_TX_DIGEST_KEY.to_string());
-    let mut suix_query_events = format!("{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"suix_queryEvents\",\"params\":[{{\"MoveModule\":{{\"package\":\"{}\",\"module\": \"{}\"}}}},null,18000,false]}}",self::get(SUI_PACKAGE_ID_KEY.to_string()).unwrap(), self::get(SUI_MODULE_ID_KEY.to_string()).unwrap());
+    let mut query_events = format!("{{\"tx_digest\": \"{}\" }}", "");
     let mut tx_digest_value = "";
 
     if tx_digest_cursor != None {
         tx_digest_value = tx_digest_cursor.as_ref().unwrap();
-        suix_query_events = format!("{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"suix_queryEvents\",\"params\":[{{\"MoveModule\":{{\"package\":\"{}\",\"module\": \"{}\"}}}},{{\"txDigest\":\"{}\", \"eventSeq\": \"0\"}},2,false]}}",self::get(SUI_PACKAGE_ID_KEY.to_string()).unwrap(), self::get(SUI_MODULE_ID_KEY.to_string()).unwrap(), tx_digest_value);
+        query_events = format!("{{\"tx_digest\": \"{}\" }}", tx_digest_value);
     }
 
     let effective_size_estimate = get_effective_size_estimate();
     let cycles = get_req_cycles();
-    let sui_rpc_url = get_sui_rpc_url();
+
     let request = CanisterHttpRequestArgument {
-        url: sui_rpc_url,
+        url: self::get(QUERY_EVENTS_URL_KEY.to_string()).unwrap(),
         max_response_bytes: Some(effective_size_estimate),
         method: HttpMethod::POST,
         headers: vec![HttpHeader {
             name: "Content-Type".to_string(),
             value: "application/json".to_string(),
         }],
-        body: Some(suix_query_events.to_string().into_bytes()),
+        body: Some(query_events.to_string().into_bytes()),
         transform: Some(TransformContext::from_name(
             "cleanup_response".to_owned(),
             serde_json::to_vec(&context).unwrap(),
@@ -407,28 +411,21 @@ fn get_withdraw_request(recipient: String, amount: String) -> CanisterHttpReques
         bucket_start_time_index: 0,
         closing_price_index: 4,
     };
-    let model = TxDigestRequest { recipient, amount };
-    let json_string: String = match serde_json::to_string(&model) {
-        Ok(resp) => resp,
-        Err(err) => panic!("Failed to serialize: {}", err.to_string()),
-    };
-    let json_utf8: Vec<u8> = json_string.into_bytes();
-    let request_body: Option<Vec<u8>> = Some(json_utf8);
+
+    let tx_digest_json = format!(
+        "{{\"recipient\": \"{}\", \"amount\": \"{}\" }}",
+        recipient, amount
+    );
+    let request_body: Option<Vec<u8>> = Some(tx_digest_json.to_string().into_bytes());
     let effective_size_estimate = get_effective_size_estimate();
     let request = CanisterHttpRequestArgument {
-        url: self::get(constants::TX_DIGEST_URL_KEY.to_string()).unwrap(),
+        url: self::get(TX_DIGEST_URL_KEY.to_string()).unwrap(),
         max_response_bytes: Some(effective_size_estimate),
         method: HttpMethod::POST,
-        headers: vec![
-            HttpHeader {
-                name: "Host".to_string(),
-                value: self::get(constants::API_URL_KEY.to_string()).unwrap(),
-            },
-            HttpHeader {
-                name: "Content-Type".to_string(),
-                value: "application/json".to_string(),
-            },
-        ],
+        headers: vec![HttpHeader {
+            name: "Content-Type".to_string(),
+            value: "application/json".to_string(),
+        }],
         body: request_body,
         transform: Some(TransformContext::from_name(
             "cleanup_response".to_owned(),
@@ -439,7 +436,7 @@ fn get_withdraw_request(recipient: String, amount: String) -> CanisterHttpReques
 }
 
 async fn get_public_key() -> Result<PublicKeyResponse, String> {
-    let is_local = self::get(constants::IS_LOCAL_KEY.to_string()).unwrap();
+    let is_local = self::get(IS_LOCAL_KEY.to_string()).unwrap();
     let request = ECDSAPublicKey {
         canister_id: None,
         derivation_path: vec![],
@@ -460,7 +457,7 @@ async fn get_public_key() -> Result<PublicKeyResponse, String> {
 }
 
 async fn sign_with_ecdsa(digest: [u8; 32]) -> Vec<u8> {
-    let is_local = self::get(constants::IS_LOCAL_KEY.to_string()).unwrap();
+    let is_local = self::get(IS_LOCAL_KEY.to_string()).unwrap();
     let request = SignWithECDSA {
         message_hash: sha256(digest).to_vec(),
         derivation_path: vec![],
@@ -470,7 +467,7 @@ async fn sign_with_ecdsa(digest: [u8; 32]) -> Vec<u8> {
         },
     };
 
-    let cycles = get_req_cycles();
+    let cycles = 30_000_000_000;
     let (response,): (SignWithECDSAReply,) = ic_cdk::api::call::call_with_payment128(
         mgmt_canister_id(),
         "sign_with_ecdsa",
@@ -490,12 +487,16 @@ async fn execute_tx_block_sui_rpc(signature: String, tx_bytes: String) -> Result
         closing_price_index: 4,
     };
 
-    let request_json: String = format!("{{\"jsonrpc\": \"2.0\",\"id\": 1,\"method\": \"sui_executeTransactionBlock\",\"params\": [\"{}\",[\"{}\"],null,null]}}", tx_bytes, signature).to_string();
-    let sui_rpc_url = get_sui_rpc_url();
+    let request_json: String = format!(
+        "{{\"signature\": \"{}\",\"tx_bytes\":\"{}\"}}",
+        signature, tx_bytes
+    )
+    .to_string();
+
     let effective_size_estimate = get_effective_size_estimate();
     let cycles = get_req_cycles();
     let request = CanisterHttpRequestArgument {
-        url: sui_rpc_url,
+        url: self::get(EXECUTE_TX_BLOCK_URL_KEY.to_string()).unwrap(),
         max_response_bytes: Some(effective_size_estimate),
         method: HttpMethod::POST,
         headers: vec![HttpHeader {
@@ -511,14 +512,10 @@ async fn execute_tx_block_sui_rpc(signature: String, tx_bytes: String) -> Result
 
     match http_request(request, cycles).await {
         Ok((response,)) => {
-            let str_body = String::from_utf8(response.body.clone())
-                .expect("Transformed response is not UTF-8 encoded.");
-            ic_cdk::api::print(format!("{:?}", str_body));
             let resp = serde_json::from_slice::<ExecuteTxBlockResponse>(&response.body)
                 .map_err(|e| format!("Error: {}", e.to_string()));
 
             if resp.is_err() {
-                log!(INFO, "{:?}", resp.err());
                 return Err("Failed to get tx digest".to_string());
             }
 
@@ -561,18 +558,9 @@ fn sha256(input: [u8; 32]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-fn get_sui_rpc_url() -> String {
-    let is_local = self::get(constants::IS_LOCAL_KEY.to_string()).unwrap();
-
-    match is_local.as_str() {
-        "true" => SUI_TESTNET_RPC_URL.to_string(),
-        _ => SUI_MAINNET_RPC_URL.to_string(),
-    }
-}
-
 fn mgmt_canister_id() -> Principal {
-    let is_local = self::get(constants::IS_LOCAL_KEY.to_string()).unwrap();
-    let ledger_id = self::get(constants::LOCAL_MGMT_PRINCIPAL_ID_KEY.to_string()).unwrap();
+    let is_local = self::get(IS_LOCAL_KEY.to_string()).unwrap();
+    let ledger_id = self::get(LOCAL_MGMT_PRINCIPAL_ID_KEY.to_string()).unwrap();
 
     match is_local.as_str() {
         "true" => Principal::from_str(&ledger_id).unwrap(),
