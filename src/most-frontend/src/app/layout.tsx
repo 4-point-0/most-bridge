@@ -20,14 +20,14 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={cn("relative")}>
-        {" "}
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
           enableSystem
           disableTransitionOnChange
         >
-          {children} <Footer />
+          {children}
+          <Footer />
         </ThemeProvider>
       </body>
     </html>

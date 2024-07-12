@@ -101,7 +101,7 @@ export default function Home() {
   }, []);
 
   return (
-    <main className="relative flex h-screen flex-grow flex-col items-center pt-10">
+    <main className="relative flex min-[500px]:h-screen flex-grow flex-col items-center pt-10">
       <h2 className="scroll-m-20 text-left pb-5 px-10 text-3xl font-semibold tracking-tight first:mt-0">
         Minter explorer
       </h2>
