@@ -52,12 +52,12 @@ export default function Home() {
       setIsLoadingMinted(true);
       await agent.fetchRootKey();
       const get_minted_transactions = await actor.get_minted_transactions();
-      const minted_trasactions = (get_minted_transactions as any).map(
-        (transaction: any) => {
+      const minted_trasactions = (get_minted_transactions as any)
+        .map((transaction: any) => {
           let parsed = JSON.parse(transaction);
 
           return {
-            block_index: parsed.block_index,
+            block_index: Number(parsed.block_index),
             date: moment(
               new Date(Number(BigInt(parsed.date) / BigInt(1000000)))
             ).format("DD-MM-YYYY hh:mm:ss"),
@@ -65,19 +65,20 @@ export default function Home() {
             from: parsed.from,
             to: parsed.to,
           };
-        }
-      );
+        })
+        .sort((a: any, b: any) => a.block_index - b.block_index);
+
       setMintedTransactions(minted_trasactions);
       setIsLoadingMinted(false);
       setIsLoadingFinalized(true);
 
       const finalized = await actor.get_finalized_transactions();
-      const finalized_trasactions = (finalized as any).map(
-        (transaction: any) => {
+      const finalized_trasactions = (finalized as any)
+        .map((transaction: any) => {
           let parsed = JSON.parse(transaction);
 
           return {
-            block_index: parsed.block_index,
+            block_index: Number(parsed.block_index),
             date: moment(
               new Date(Number(BigInt(parsed.date) / BigInt(1000000)))
             ).format("DD-MM-YYYY hh:mm:ss"),
@@ -85,8 +86,8 @@ export default function Home() {
             from: parsed.from,
             tx: parsed.tx,
           };
-        }
-      );
+        })
+        .sort((a: any, b: any) => a.block_index - b.block_index);
 
       setFinalizedTransactions(finalized_trasactions);
       setIsLoadingFinalized(false);
